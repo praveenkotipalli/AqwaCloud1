@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { createGoogleDriveService } from "@/lib/google-drive"
+import { createOneDriveService } from "@/lib/onedrive"
 
 export interface CloudConnection {
   id: string
@@ -58,7 +59,7 @@ const GOOGLE_OAUTH_CONFIG = {
 
 const ONEDRIVE_OAUTH_CONFIG = {
   clientId: process.env.NEXT_PUBLIC_ONEDRIVE_CLIENT_ID || "d5edfa6f-cee9-4160-b6fc-f1ec28f8b3ff",
-  scope: "Files.ReadWrite.All",
+  scope: "Files.ReadWrite.All User.Read offline_access",
   redirectUri: typeof window !== "undefined" ? `${window.location.origin}/auth/onedrive/callback` : "",
 }
 
@@ -87,6 +88,32 @@ export function useCloudConnections() {
   const [transferJobs, setTransferJobs] = useState<TransferJob[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
+  // Helper function to clean and validate access tokens
+  const cleanAccessToken = (token: string): string => {
+    if (!token) return token
+    
+    // Remove any whitespace, newlines, or extra characters
+    let cleaned = token.trim()
+    
+    // Remove any quotes that might have been added
+    if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+      cleaned = cleaned.slice(1, -1)
+    }
+    
+    // Remove any newlines or carriage returns
+    cleaned = cleaned.replace(/[\r\n]/g, '')
+    
+    console.log(`🧹 Token cleaning:`, {
+      originalLength: token.length,
+      cleanedLength: cleaned.length,
+      wasCleaned: token !== cleaned,
+      originalPreview: token.substring(0, 20) + '...',
+      cleanedPreview: cleaned.substring(0, 20) + '...'
+    })
+    
+    return cleaned
+  }
+
   // Load saved connections from localStorage
   useEffect(() => {
     try {
@@ -100,8 +127,15 @@ export function useCloudConnections() {
         // Validate that we have the expected structure
         if (Array.isArray(parsed) && parsed.length > 0) {
           console.log("✅ Valid connections found in localStorage")
+          
+          // Clean access tokens for all connections
+          const cleanedConnections = parsed.map(conn => ({
+            ...conn,
+            accessToken: conn.accessToken ? cleanAccessToken(conn.accessToken) : conn.accessToken
+          }))
+          
           console.log("🔍 Checking Google Drive connection details:")
-          const googleConn = parsed.find(c => c.id === "google-drive")
+          const googleConn = cleanedConnections.find(c => c.id === "google-drive")
           if (googleConn) {
             console.log("  - Connected:", googleConn.connected)
             console.log("  - Status:", googleConn.status)
@@ -109,8 +143,19 @@ export function useCloudConnections() {
             console.log("  - Access Token Length:", googleConn.accessToken?.length || 0)
             console.log("  - Provider:", googleConn.provider)
           }
-          setConnections(parsed)
-          console.log("Set connections from localStorage:", parsed)
+          
+          console.log("🔍 Checking OneDrive connection details:")
+          const onedriveConn = cleanedConnections.find(c => c.id === "onedrive")
+          if (onedriveConn) {
+            console.log("  - Connected:", onedriveConn.connected)
+            console.log("  - Status:", onedriveConn.status)
+            console.log("  - Has Access Token:", !!onedriveConn.accessToken)
+            console.log("  - Access Token Length:", onedriveConn.accessToken?.length || 0)
+            console.log("  - Provider:", onedriveConn.provider)
+          }
+          
+          setConnections(cleanedConnections)
+          console.log("Set connections from localStorage:", cleanedConnections)
         } else {
           console.warn("Saved connections are invalid, using defaults")
           // Save the default connections
@@ -241,8 +286,8 @@ export function useCloudConnections() {
   }, [saveConnections])
 
   // Get files from a connected service with pagination
-  const getFiles = useCallback(async (serviceId: string, path: string = "/", page: number = 1): Promise<{ files: FileItem[], hasMore: boolean, totalCount: number }> => {
-    console.log(`🔍 getFiles called for ${serviceId} at path ${path}, page: ${page}`)
+  const getFiles = useCallback(async (serviceId: string, folderId: string = "root", page: number = 1): Promise<{ files: FileItem[], hasMore: boolean, totalCount: number }> => {
+    console.log(`🔍 getFiles called for ${serviceId} at folderId ${folderId}, page: ${page}`)
     console.log("📊 Current connections:", connections)
     
     // Wait for connections to be loaded
@@ -274,11 +319,9 @@ export function useCloudConnections() {
 
     try {
       if (connection.provider === "google") {
-        return await getGoogleDriveFiles(connection, path, page)
+        return await getGoogleDriveFiles(connection, folderId, page)
       } else if (connection.provider === "microsoft") {
-        const files = await getOneDriveFiles(connection, path)
-        // For OneDrive, we'll implement pagination later
-        return { files, hasMore: false, totalCount: files.length }
+        return await getOneDriveFiles(connection, folderId, page)
       } else {
         throw new Error("Unsupported provider")
       }
@@ -290,13 +333,20 @@ export function useCloudConnections() {
   }, [connections])
 
   // Get files from Google Drive with real API
-  const getGoogleDriveFiles = async (connection: CloudConnection, path: string, page: number = 1): Promise<{ files: FileItem[], hasMore: boolean, totalCount: number }> => {
+  const getGoogleDriveFiles = async (connection: CloudConnection, folderId: string, page: number = 1): Promise<{ files: FileItem[], hasMore: boolean, totalCount: number }> => {
     if (!connection.accessToken) {
       throw new Error("No access token available")
     }
 
     try {
-      console.log(`🚀 Fetching REAL Google Drive files for path: ${path}, page: ${page}`)
+      console.log(`🚀 Fetching REAL Google Drive files for folderId: ${folderId}, page: ${page}`)
+      console.log(`🔑 Token details:`, {
+        hasToken: !!connection.accessToken,
+        tokenLength: connection.accessToken?.length || 0,
+        tokenPreview: connection.accessToken?.substring(0, 20) + '...',
+        expiresAt: connection.expiresAt,
+        isExpired: connection.expiresAt ? Date.now() > connection.expiresAt : 'unknown'
+      })
       
       // Create Google Drive service
       const driveService = createGoogleDriveService(connection)
@@ -311,7 +361,7 @@ export function useCloudConnections() {
       }
 
       // Get folder contents with pagination
-      const result = await driveService.getFolderContents("root", page, 50)
+      const result = await driveService.getFolderContents(folderId || "root", page, 50)
       
       console.log(`✅ Retrieved ${result.files.length} files from Google Drive`)
       console.log(`📄 Has more pages: ${result.hasMore}`)
@@ -325,15 +375,120 @@ export function useCloudConnections() {
     }
   }
 
-  // Get files from OneDrive (placeholder for now)
-  const getOneDriveFiles = async (connection: CloudConnection, path: string): Promise<FileItem[]> => {
+  // Get files from OneDrive with real API
+  const getOneDriveFiles = async (connection: CloudConnection, folderId: string, page: number = 1): Promise<{ files: FileItem[], hasMore: boolean, totalCount: number }> => {
     if (!connection.accessToken) {
       throw new Error("No access token available")
     }
 
-    // TODO: Implement real OneDrive API integration
-    console.log("OneDrive integration coming soon...")
-    return []
+    try {
+      console.log(`🚀 Fetching REAL OneDrive files for folderId: ${folderId}, page: ${page}`)
+      console.log(`🔑 OneDrive connection details:`, {
+        id: connection.id,
+        provider: connection.provider,
+        hasAccessToken: !!connection.accessToken,
+        tokenLength: connection.accessToken?.length || 0,
+        tokenPreview: connection.accessToken?.substring(0, 20) + '...',
+        expiresAt: connection.expiresAt,
+        isExpired: connection.expiresAt ? Date.now() > connection.expiresAt : 'unknown'
+      })
+      
+      // Log the full token for debugging (be careful with this in production)
+      console.log(`🔐 Full access token:`, connection.accessToken)
+      
+      // Check if token is expired; attempt refresh if possible
+      if (connection.expiresAt && Date.now() > connection.expiresAt) {
+        console.log(`⏰ OneDrive token is expired! Expired at: ${new Date(connection.expiresAt).toISOString()}`)
+        if (connection.refreshToken) {
+          console.log(`🔄 Attempting to refresh OneDrive access token using refresh_token...`)
+          try {
+            const refreshResp = await fetch("/api/auth/onedrive/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: connection.refreshToken })
+            })
+            if (!refreshResp.ok) {
+              const txt = await refreshResp.text()
+              console.error(`❌ Token refresh failed:`, txt)
+              throw new Error("Failed to refresh OneDrive token")
+            }
+            const refreshed = await refreshResp.json()
+            const newAccessToken: string | undefined = refreshed.access_token
+            const newRefreshToken: string | undefined = refreshed.refresh_token || connection.refreshToken
+            const newExpiresAt: number = Date.now() + (refreshed.expires_in * 1000)
+            if (!newAccessToken) {
+              throw new Error("Refresh response missing access_token")
+            }
+            // Update in state and localStorage
+            setConnections(prev => {
+              const updated = prev.map(c => c.id === connection.id ? {
+                ...c,
+                accessToken: newAccessToken,
+                refreshToken: newRefreshToken,
+                expiresAt: newExpiresAt,
+                status: "connected" as const,
+                error: undefined
+              } : c)
+              saveConnections(updated)
+              return updated
+            })
+            // Update local variable reference for this call
+            connection.accessToken = newAccessToken
+            connection.refreshToken = newRefreshToken
+            connection.expiresAt = newExpiresAt
+            console.log(`✅ OneDrive token refreshed successfully; proceeding.`)
+          } catch (refreshErr) {
+            console.error(`❌ OneDrive token refresh error:`, refreshErr)
+            throw new Error("Access token has expired. Please reconnect your OneDrive account.")
+          }
+        } else {
+          throw new Error("Access token has expired. Please reconnect your OneDrive account.")
+        }
+      }
+      
+      // Create OneDrive service
+      const onedriveService = createOneDriveService(connection)
+      if (!onedriveService) {
+        throw new Error("Failed to create OneDrive service")
+      }
+
+      console.log(`🔧 OneDrive service created successfully`)
+      console.log(`🔍 Service token details:`, {
+        hasToken: !!onedriveService['accessToken'],
+        tokenLength: onedriveService['accessToken']?.length || 0,
+        tokenPreview: onedriveService['accessToken']?.substring(0, 30) + '...',
+        tokenEnd: onedriveService['accessToken']?.substring(-20) || 'N/A'
+      })
+
+      // Validate token
+      const isValid = await onedriveService.validateToken()
+      if (!isValid) {
+        console.error(`❌ OneDrive token validation failed`)
+        console.error(`🔍 Connection details:`, {
+          hasToken: !!connection.accessToken,
+          tokenLength: connection.accessToken?.length || 0,
+          tokenPreview: connection.accessToken?.substring(0, 30) + '...',
+          expiresAt: connection.expiresAt,
+          isExpired: connection.expiresAt ? Date.now() > connection.expiresAt : 'unknown'
+        })
+        throw new Error("Invalid or expired access token")
+      }
+
+      console.log(`✅ OneDrive token validation successful, proceeding to fetch files...`)
+
+      // Get folder contents with pagination
+      const result = await onedriveService.getFolderContents(folderId || "root", page, 50)
+      
+      console.log(`✅ Retrieved ${result.files.length} files from OneDrive`)
+      console.log(`📄 Has more pages: ${result.hasMore}`)
+      console.log(`📊 Total count: ${result.totalCount}`)
+
+      return result
+
+    } catch (error) {
+      console.error("Failed to get real OneDrive files:", error)
+      throw error
+    }
   }
 
   // Start a transfer job

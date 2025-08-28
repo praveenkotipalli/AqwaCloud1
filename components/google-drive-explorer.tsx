@@ -29,6 +29,7 @@ interface GoogleDriveExplorerProps {
 
 export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }: GoogleDriveExplorerProps) {
   const [currentPath, setCurrentPath] = useState<string[]>(["/"])
+  const [currentFolderId, setCurrentFolderId] = useState<string>("root")
   const [files, setFiles] = useState<FileItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +43,7 @@ export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }:
     if (connection.connected && connection.accessToken) {
       loadFiles()
     }
-  }, [connection, currentPath, currentPage])
+  }, [connection, currentPath, currentFolderId, currentPage])
 
   const loadFiles = async () => {
     if (!connection.accessToken) return
@@ -57,7 +58,7 @@ export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }:
       }
 
       const path = currentPath.join("/")
-      const result = await driveService.getFolderContents("root", currentPage, 50)
+      const result = await driveService.getFolderContents(currentFolderId || "root", currentPage, 50)
       
       setFiles(result.files)
       setHasMore(result.hasMore)
@@ -76,6 +77,7 @@ export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }:
   const handleFolderClick = (folder: FileItem) => {
     if (folder.type === "folder") {
       setCurrentPath([...currentPath, folder.name])
+      setCurrentFolderId(folder.id)
       setCurrentPage(1) // Reset to first page when entering folder
     }
   }
@@ -83,6 +85,9 @@ export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }:
   const handleBackClick = () => {
     if (currentPath.length > 1) {
       setCurrentPath(currentPath.slice(0, -1))
+      if (currentPath.length - 1 === 1) {
+        setCurrentFolderId("root")
+      }
       setCurrentPage(1) // Reset to first page when going back
     }
   }

@@ -32,6 +32,9 @@ export class GoogleDriveService {
       url.searchParams.append(key, value)
     })
 
+    console.log(`🌐 Making Google Drive API request to: ${url.toString()}`)
+    console.log(`🔑 Using access token: ${this.accessToken.substring(0, 20)}...`)
+
     const response = await fetch(url.toString(), {
       headers: {
         'Authorization': `Bearer ${this.accessToken}`,
@@ -41,6 +44,8 @@ export class GoogleDriveService {
 
     if (!response.ok) {
       const errorText = await response.text()
+      console.error(`❌ Google Drive API error: ${response.status} ${response.statusText}`)
+      console.error(`📄 Error details:`, errorText)
       throw new Error(`Google Drive API error: ${response.status} ${response.statusText} - ${errorText}`)
     }
 

@@ -45,6 +45,7 @@ import { useAuth } from "@/hooks/use-auth"
 import { useRouter } from "next/navigation"
 import { useCloudConnections, FileItem } from "@/hooks/use-cloud-connections"
 import { GoogleDriveExplorer } from "@/components/google-drive-explorer"
+import { OneDriveExplorer } from "@/components/onedrive-explorer"
 import { ConnectionManager } from "@/components/connection-manager"
 
 interface TransferConfig {
@@ -178,13 +179,41 @@ export default function TransferPage() {
 
   // Get selected service connection
   const getSelectedServiceConnection = (serviceId: string) => {
-    return connections.find(conn => conn.id === serviceId)
+    const connection = connections.find(conn => conn.id === serviceId)
+    console.log(`🔍 Looking for service connection:`, {
+      serviceId,
+      found: !!connection,
+      connection: connection ? {
+        id: connection.id,
+        provider: connection.provider,
+        connected: connection.connected,
+        status: connection.status,
+        hasAccessToken: !!connection.accessToken,
+        accessTokenLength: connection.accessToken?.length || 0
+      } : null
+    })
+    return connection
   }
 
-  // Check if user is authenticated
+
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.push("/login")
+    }
+  }, [isAuthenticated, router])
+
+  // Show loading state while checking authentication
   if (!isAuthenticated) {
-    router.push("/login")
-    return null
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-white">Checking authentication...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -330,6 +359,12 @@ export default function TransferPage() {
                 onFileSelect={handleSourceFileSelect}
                 selectedFiles={selectedSourceFiles}
               />
+            ) : sourceService && getSelectedServiceConnection(sourceService)?.provider === "microsoft" ? (
+              <OneDriveExplorer
+                connectionId={sourceService}
+                onFileSelect={handleSourceFileSelect}
+                selectedFiles={selectedSourceFiles}
+              />
             ) : (
               <Card className="bg-white/5 border-white/20">
                 <CardContent className="p-6 text-center">
@@ -356,6 +391,12 @@ export default function TransferPage() {
             {destinationService && getSelectedServiceConnection(destinationService)?.provider === "google" ? (
               <GoogleDriveExplorer
                 connection={getSelectedServiceConnection(destinationService)!}
+                onFileSelect={handleDestFileSelect}
+                selectedFiles={selectedDestFiles}
+              />
+            ) : destinationService && getSelectedServiceConnection(destinationService)?.provider === "microsoft" ? (
+              <OneDriveExplorer
+                connectionId={destinationService}
                 onFileSelect={handleDestFileSelect}
                 selectedFiles={selectedDestFiles}
               />
