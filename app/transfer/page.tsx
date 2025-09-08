@@ -89,10 +89,14 @@ export default function TransferPage() {
   const { 
     connections, 
     transferJobs, 
+    activeSessions,
     startTransfer, 
+    startRealTimeTransfer,
     pauseTransfer, 
     resumeTransfer, 
-    cancelTransfer 
+    cancelTransfer,
+    stopRealTimeTransfer,
+    getRealTimeStats
   } = useCloudConnections()
 
   const [sourceService, setSourceService] = useState<string>("")
@@ -106,6 +110,9 @@ export default function TransferPage() {
     createFolders: true,
     skipExisting: true,
   })
+
+  const [enableRealTime, setEnableRealTime] = useState(true)
+  const [realTimeStats, setRealTimeStats] = useState<any>(null)
 
   const [transferQueue, setTransferQueue] = useState<QueuedTransfer[]>([])
   const [showQueue, setShowQueue] = useState(false)
@@ -145,12 +152,20 @@ export default function TransferPage() {
     }
 
     try {
-      const jobId = await startTransfer(
-        sourceService,
-        destinationService,
-        selectedSourceFiles,
-        "/"
-      )
+      const jobId = enableRealTime 
+        ? await startRealTimeTransfer(
+            sourceService,
+            destinationService,
+            selectedSourceFiles,
+            "/",
+            true
+          )
+        : await startTransfer(
+            sourceService,
+            destinationService,
+            selectedSourceFiles,
+            "/"
+          )
 
       // Add to local queue for display
       const newTransfer: QueuedTransfer = {
@@ -159,7 +174,7 @@ export default function TransferPage() {
         sourceService,
         destinationService,
         direction: "source-to-dest",
-        status: "queued",
+        status: enableRealTime ? "transferring" : "queued",
         progress: 0,
         startTime: new Date(),
         totalFiles: selectedSourceFiles.length,
@@ -170,7 +185,7 @@ export default function TransferPage() {
       setSelectedSourceFiles([])
       setSelectionSide(null)
 
-      console.log(`Transfer started with job ID: ${jobId}`)
+      console.log(`${enableRealTime ? 'Real-time' : 'Standard'} transfer started with job ID: ${jobId}`)
     } catch (error) {
       console.error("Failed to start transfer:", error)
       alert("Failed to start transfer")
@@ -180,22 +195,58 @@ export default function TransferPage() {
   // Get selected service connection
   const getSelectedServiceConnection = (serviceId: string) => {
     const connection = connections.find(conn => conn.id === serviceId)
-    console.log(`🔍 Looking for service connection:`, {
-      serviceId,
-      found: !!connection,
-      connection: connection ? {
-        id: connection.id,
-        provider: connection.provider,
-        connected: connection.connected,
-        status: connection.status,
-        hasAccessToken: !!connection.accessToken,
-        accessTokenLength: connection.accessToken?.length || 0
-      } : null
-    })
     return connection
   }
 
 
+
+  // Listen for real-time transfer updates
+  useEffect(() => {
+    const handleRealTimeUpdate = (update: any) => {
+      console.log('📡 Transfer page received real-time update:', update)
+      if (update.type === 'progress' && update.data?.jobId) {
+        setTransferQueue(prev => prev.map(transfer => {
+          // Match queue item either by explicit id/envelope or by session + filename
+          const sameId = transfer.id === update.data.jobId || update.data.jobId === transfer.id
+          const sameEnvelope = update.id === `progress_${transfer.id}`
+          const sameSession = typeof transfer.id === 'string' && update.data.sessionId && transfer.id.includes(update.data.sessionId)
+          const sameFile = !!(update.data.fileName && transfer.sourceFiles.includes(update.data.fileName))
+          const isMatchingTransfer = sameId || sameEnvelope || sameSession || sameFile
+
+          if (isMatchingTransfer) {
+            const nextProgress = typeof update.data.progress === 'number' ? Math.max(transfer.progress, update.data.progress) : transfer.progress
+            const nextStatus = update.data.status === 'completed' ? 'completed'
+                              : update.data.status === 'failed' ? 'failed'
+                              : transfer.status
+            console.log(`📊 Updating transfer ${transfer.id} -> progress: ${nextProgress}% status: ${nextStatus}`)
+            return {
+              ...transfer,
+              progress: nextProgress,
+              status: nextStatus,
+              transferredFiles: nextStatus === 'completed' ? transfer.totalFiles : transfer.transferredFiles,
+              endTime: nextStatus === 'completed' || nextStatus === 'failed' ? new Date() : transfer.endTime
+            }
+          }
+          return transfer
+        }))
+      }
+    }
+
+    // Subscribe to real-time updates from the service
+    try {
+      const { getRealTimeTransferService } = require('@/lib/realtime-transfer-service')
+      const realTimeService = getRealTimeTransferService()
+      realTimeService.onUpdate(handleRealTimeUpdate)
+      console.log('📡 Transfer page subscribed to real-time updates')
+      
+      return () => {
+        realTimeService.offUpdate(handleRealTimeUpdate)
+        console.log('📡 Transfer page unsubscribed from real-time updates')
+      }
+    } catch (error) {
+      console.warn('Failed to subscribe to real-time updates:', error)
+    }
+  }, [])
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -336,6 +387,70 @@ export default function TransferPage() {
                   <Label htmlFor="skip" className="text-white text-sm">Skip Existing</Label>
                 </div>
               </div>
+
+              {/* Real-Time Transfer Options */}
+              <div className="border-t border-white/10 pt-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-lg font-semibold text-white">Real-Time Transfer</h4>
+                  <Badge variant="secondary" className="text-white">
+                    {activeSessions.length} Active Sessions
+                  </Badge>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="realtime"
+                      checked={enableRealTime}
+                      onCheckedChange={setEnableRealTime}
+                    />
+                    <Label htmlFor="realtime" className="text-white text-sm">
+                      Enable Real-Time Sync
+                    </Label>
+                  </div>
+                  
+                  {enableRealTime && (
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        onClick={() => setRealTimeStats(getRealTimeStats())}
+                        variant="outline"
+                        size="sm"
+                        className="border-white/20 text-white hover:bg-white/10"
+                      >
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Refresh Stats
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Real-Time Statistics */}
+                {realTimeStats && (
+                  <div className="mt-4 p-4 bg-white/5 rounded-lg">
+                    <h5 className="text-sm font-medium text-white mb-2">Real-Time Statistics</h5>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="text-slate-400">Active Sessions:</span>
+                        <span className="text-white ml-2">{realTimeStats.activeSessions}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Monitored Files:</span>
+                        <span className="text-white ml-2">{realTimeStats.monitoredFiles}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Active Transfers:</span>
+                        <span className="text-white ml-2">{realTimeStats.activeTransfers}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Queue Status:</span>
+                        <span className="text-white ml-2">
+                          {realTimeStats.queueStatus.pending + realTimeStats.queueStatus.transferring}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -422,9 +537,139 @@ export default function TransferPage() {
             className="bg-blue-600 hover:bg-blue-700 text-white px-8"
           >
             <ArrowLeftRight className="h-5 w-5 mr-2" />
-            Start Transfer
+            {enableRealTime ? 'Start Real-Time Transfer' : 'Start Transfer'}
           </Button>
+          
+          {activeSessions.length > 0 && (
+            <Button
+              onClick={() => {
+                activeSessions.forEach(sessionId => stopRealTimeTransfer(sessionId))
+              }}
+              variant="outline"
+              size="lg"
+              className="border-red-500 text-red-500 hover:bg-red-500 hover:text-white px-8"
+            >
+              <X className="h-5 w-5 mr-2" />
+              Stop All Real-Time Sessions
+            </Button>
+          )}
+          
+          {/* Debug: Show connection status */}
+          {sourceService && destinationService && (
+            <div className="text-center text-sm text-slate-400">
+              <div>Source: {getSelectedServiceConnection(sourceService)?.name} 
+                {getSelectedServiceConnection(sourceService)?.connected ? ' ✅' : ' ❌'}
+              </div>
+              <div>Destination: {getSelectedServiceConnection(destinationService)?.name} 
+                {getSelectedServiceConnection(destinationService)?.connected ? ' ✅' : ' ❌'}
+              </div>
+              {getSelectedServiceConnection(destinationService)?.provider === "microsoft" && (
+                <div className="text-xs mt-1">
+                  Token: {getSelectedServiceConnection(destinationService)?.accessToken?.substring(0, 20)}...
+                  {(() => {
+                    const token = getSelectedServiceConnection(destinationService)?.accessToken
+                    return token && token.length > 100 ? ' ✅' : ' ❌'
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Active Transfer Status */}
+        {transferJobs.length > 0 && (
+          <div className="mt-8">
+            <Card className="bg-white/5 border-white/20">
+              <CardHeader>
+                <CardTitle className="text-white">Active Transfers</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {transferJobs.map((job) => (
+                    <div key={job.id} className="flex items-center justify-between p-4 bg-white/5 rounded-lg">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-white font-medium">
+                            {job.sourceFiles.map(f => f.name).join(", ")}
+                          </span>
+                          <ArrowRight className="h-4 w-4 text-slate-400" />
+                          <span className="text-slate-400">{job.destinationService}</span>
+                          {job.isRealTime && (
+                            <Badge variant="outline" className="text-green-400 border-green-400">
+                              Real-Time
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Progress value={job.progress} className="flex-1" />
+                          <span className="text-slate-400 text-sm">{job.progress}%</span>
+                        </div>
+                        {job.status === "transferring" && (
+                          <div className="text-sm text-blue-400 mb-2">
+                            {job.progress < 25 ? "📥 Downloading files..." : 
+                             job.progress < 75 ? "📤 Uploading files..." : 
+                             "🔄 Finalizing transfer..."}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 text-sm text-slate-400">
+                          <Badge 
+                            variant={job.status === "completed" ? "default" : job.status === "failed" ? "destructive" : "secondary"}
+                            className="text-black"
+                          >
+                            {job.status}
+                          </Badge>
+                          {job.isRealTime && job.sessionId && (
+                            <Badge variant="outline" className="text-blue-400 border-blue-400">
+                              Session: {job.sessionId.substring(0, 8)}...
+                            </Badge>
+                          )}
+                          {job.conflictResolution && (
+                            <Badge variant="outline" className="text-yellow-400 border-yellow-400">
+                              Conflict Resolved
+                            </Badge>
+                          )}
+                          {job.error && (
+                            <span className="text-red-400">Error: {job.error}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 ml-4">
+                        {job.status === "transferring" && (
+                          <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                        )}
+                        {job.status === "completed" && (
+                          <CheckCircle className="h-4 w-4 text-green-400" />
+                        )}
+                        {job.status === "failed" && (
+                          <AlertCircle className="h-4 w-4 text-red-400" />
+                        )}
+                        {job.isRealTime && job.sessionId ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => stopRealTimeTransfer(job.sessionId!)}
+                            className="text-red-400 hover:text-red-300"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => cancelTransfer(job.id)}
+                            className="text-red-400 hover:text-red-300"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Transfer Queue */}
         {showQueue && (

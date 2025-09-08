@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Loader2, CheckCircle, XCircle } from "lucide-react"
 
-export default function OneDriveCallbackPage() {
+function OneDriveCallbackContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading")
@@ -75,12 +75,13 @@ export default function OneDriveCallbackPage() {
         
         // Clean the token before storing
         const cleanToken = tokenData.access_token.trim()
-        if (cleanToken.length < 100) {
+        if (cleanToken.length < 50) {
           console.warn(`⚠️ Access token seems too short (${cleanToken.length} chars)`)
         }
         
+        // Microsoft Graph API tokens don't start with 'ey' - this is normal
         if (!cleanToken.startsWith('ey')) {
-          console.warn(`⚠️ Access token does not start with expected JWT header`)
+          console.log(`ℹ️ Access token is Microsoft Graph API format (not JWT)`)
         }
         
         // Additional token validation
@@ -97,12 +98,13 @@ export default function OneDriveCallbackPage() {
         })
         
         // Verify token format
-        if (cleanToken.length < 100) {
+        if (cleanToken.length < 50) {
           console.error(`❌ Token is too short - this might indicate corruption`)
         }
         
+        // Microsoft Graph API tokens don't start with 'ey' - this is normal
         if (!cleanToken.startsWith('ey')) {
-          console.error(`❌ Token doesn't start with expected JWT header`)
+          console.log(`ℹ️ Token is Microsoft Graph API format (not JWT)`)
         }
         
         if (cleanToken.includes('undefined') || cleanToken.includes('null')) {
@@ -299,5 +301,22 @@ export default function OneDriveCallbackPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function OneDriveCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Card className="w-full max-w-md">
+          <CardContent className="p-6 text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
+            <p className="text-sm text-gray-600">Loading...</p>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <OneDriveCallbackContent />
+    </Suspense>
   )
 }

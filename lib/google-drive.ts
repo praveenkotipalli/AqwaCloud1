@@ -21,6 +21,7 @@ export interface GoogleDriveFolder {
 export class GoogleDriveService {
   private accessToken: string
   private baseUrl = "https://www.googleapis.com/drive/v3"
+  private uploadBaseUrl = "https://www.googleapis.com/upload/drive/v3"
 
   constructor(accessToken: string) {
     this.accessToken = accessToken
@@ -238,6 +239,161 @@ export class GoogleDriveService {
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+  }
+
+  // Download file content
+  async downloadFile(fileId: string): Promise<ArrayBuffer> {
+    console.log(`📥 Downloading file ${fileId} from Google Drive`)
+    
+    // First, get file metadata to determine if it's a Google Docs file
+    const metadataResponse = await fetch(`${this.baseUrl}/files/${fileId}`, {
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+      }
+    })
+
+    if (!metadataResponse.ok) {
+      const errorText = await metadataResponse.text()
+      console.error(`❌ Google Drive metadata error: ${metadataResponse.status} ${metadataResponse.statusText}`)
+      throw new Error(`Google Drive metadata error: ${metadataResponse.status} ${metadataResponse.statusText} - ${errorText}`)
+    }
+
+    const fileMetadata = await metadataResponse.json()
+    console.log(`📄 File metadata:`, {
+      name: fileMetadata.name,
+      mimeType: fileMetadata.mimeType,
+      size: fileMetadata.size
+    })
+
+    // Check if it's a Google Docs file that needs export
+    const isGoogleDocsFile = fileMetadata.mimeType && (
+      fileMetadata.mimeType.startsWith('application/vnd.google-apps.') ||
+      fileMetadata.mimeType.includes('google-apps')
+    )
+
+    let downloadUrl: string
+    if (isGoogleDocsFile) {
+      console.log(`📝 Detected Google Docs file, using Export API`)
+      // For Google Docs files, use the export API
+      const exportMimeType = this.getExportMimeType(fileMetadata.mimeType)
+      downloadUrl = `${this.baseUrl}/files/${fileId}/export?mimeType=${encodeURIComponent(exportMimeType)}`
+    } else {
+      console.log(`📄 Detected binary file, using direct download`)
+      // For regular files, use direct download
+      downloadUrl = `${this.baseUrl}/files/${fileId}?alt=media`
+    }
+
+    const response = await fetch(downloadUrl, {
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+      }
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error(`❌ Google Drive download error: ${response.status} ${response.statusText}`)
+      console.error(`📄 Error details:`, errorText)
+      throw new Error(`Google Drive download error: ${response.status} ${response.statusText} - ${errorText}`)
+    }
+
+    const arrayBuffer = await response.arrayBuffer()
+    console.log(`✅ Downloaded ${arrayBuffer.byteLength} bytes from Google Drive`)
+    return arrayBuffer
+  }
+
+  // Get the appropriate export MIME type for Google Docs files
+  private getExportMimeType(googleDocsMimeType: string): string {
+    const exportMimeTypes: { [key: string]: string } = {
+      'application/vnd.google-apps.document': 'application/pdf', // Google Docs -> PDF
+      'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // Google Sheets -> Excel
+      'application/vnd.google-apps.presentation': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', // Google Slides -> PowerPoint
+      'application/vnd.google-apps.drawing': 'image/png', // Google Drawings -> PNG
+      'application/vnd.google-apps.form': 'application/pdf', // Google Forms -> PDF
+    }
+
+    return exportMimeTypes[googleDocsMimeType] || 'application/pdf'
+  }
+
+  // Upload file to Google Drive
+  async uploadFile(fileData: ArrayBuffer, fileName: string, folderId: string = "root"): Promise<GoogleDriveFile> {
+    console.log(`📤 Uploading file ${fileName} to Google Drive folder ${folderId}`)
+    console.log(`📊 File size: ${fileData.byteLength} bytes`)
+    
+    try {
+      // Use the correct Google Drive multipart format
+      const boundary = '-------314159265358979323846'
+      const delimiter = `\r\n--${boundary}\r\n`
+      const close_delim = `\r\n--${boundary}--`
+      
+      const metadata = {
+        name: fileName,
+        parents: folderId === "root" ? undefined : [folderId]
+      }
+      
+      // Create the multipart body efficiently using Uint8Array
+      const metadataPart = new TextEncoder().encode(
+        delimiter +
+        'Content-Type: application/json\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: application/octet-stream\r\n\r\n'
+      )
+      
+      const closePart = new TextEncoder().encode(close_delim)
+      
+      // Combine all parts efficiently
+      const totalLength = metadataPart.length + fileData.byteLength + closePart.length
+      const combinedData = new Uint8Array(totalLength)
+      
+      let offset = 0
+      combinedData.set(metadataPart, offset)
+      offset += metadataPart.length
+      combinedData.set(new Uint8Array(fileData), offset)
+      offset += fileData.byteLength
+      combinedData.set(closePart, offset)
+      
+      // Recompose body to strictly follow Drive multipart/related format
+      const preamble = `--${boundary}\r\n` +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        `\r\n--${boundary}\r\n` +
+        'Content-Type: application/octet-stream\r\n\r\n'
+
+      const closing = `\r\n--${boundary}--`
+      const preambleBytes = new TextEncoder().encode(preamble)
+      const closingBytes = new TextEncoder().encode(closing)
+
+      // Build body bytes (explicit, avoids implicit header issues)
+      const bodyBytes = new Uint8Array(preambleBytes.length + fileData.byteLength + closingBytes.length)
+      bodyBytes.set(preambleBytes, 0)
+      bodyBytes.set(new Uint8Array(fileData), preambleBytes.length)
+      bodyBytes.set(closingBytes, preambleBytes.length + fileData.byteLength)
+
+      // Use the Google Drive upload endpoint (note the "upload" hostname segment)
+      const response = await fetch(`${this.uploadBaseUrl}/files?uploadType=multipart`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`
+        },
+        body: bodyBytes
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`❌ Google Drive upload error: ${response.status} ${response.statusText}`)
+        console.error(`📄 Error details:`, errorText)
+        throw new Error(`Google Drive upload error: ${response.status} ${response.statusText} - ${errorText}`)
+      }
+
+      const uploadedFile = await response.json()
+      console.log(`✅ Uploaded file ${fileName} to Google Drive:`, uploadedFile.id)
+      return uploadedFile
+      
+    } catch (error) {
+      console.error(`❌ Google Drive upload failed:`, error)
+      throw error
+    }
   }
 
   // Validate access token

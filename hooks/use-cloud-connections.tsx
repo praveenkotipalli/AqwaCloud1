@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react"
 import { createGoogleDriveService } from "@/lib/google-drive"
 import { createOneDriveService } from "@/lib/onedrive"
+import { getRealTimeTransferService } from "@/lib/realtime-transfer-service"
+import { TransferUpdate, FileChangeEvent } from "@/lib/real-time-sync"
 
 export interface CloudConnection {
   id: string
@@ -49,6 +51,9 @@ export interface TransferJob {
   startTime?: Date
   endTime?: Date
   error?: string
+  isRealTime?: boolean
+  sessionId?: string
+  conflictResolution?: any
 }
 
 const GOOGLE_OAUTH_CONFIG = {
@@ -87,6 +92,50 @@ export function useCloudConnections() {
 
   const [transferJobs, setTransferJobs] = useState<TransferJob[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [realTimeTransferService] = useState(() => getRealTimeTransferService())
+  const [activeSessions, setActiveSessions] = useState<string[]>([])
+
+  // Listen for real-time updates and update transfer jobs
+  useEffect(() => {
+    const handleRealTimeUpdate = (update: any) => {
+      console.log('📡 Received real-time update:', update)
+      
+      if (update.type === 'progress' && update.data?.jobId) {
+        setTransferJobs(prev => prev.map(job => {
+          // Robust matching across realtime session jobs (transfer_*) and UI jobs (realtime_session_*)
+          const sameJobId = job.id === update.data.jobId || update.data.jobId === job.id
+          const sameProgressEnvelope = update.id === `progress_${job.id}`
+          const sameSession = !!(job.sessionId && update.data.sessionId && job.sessionId === update.data.sessionId)
+          const sameFileInSession = !!(job.isRealTime && job.sessionId && update.data.fileName && job.sourceFiles?.some(f => f.name === update.data.fileName))
+          const isMatchingJob = sameJobId || sameProgressEnvelope || sameSession || sameFileInSession
+          
+          if (isMatchingJob) {
+            const nextProgress = typeof update.data.progress === 'number' ? Math.max(job.progress, update.data.progress) : job.progress
+            const nextStatus = update.data.status === 'completed' ? 'completed'
+                              : update.data.status === 'failed' ? 'failed'
+                              : update.data.status === 'transferring' ? 'transferring'
+                              : job.status
+            console.log(`📊 Updating job ${job.id} -> progress: ${nextProgress}% status: ${nextStatus}`)
+            return {
+              ...job,
+              progress: nextProgress,
+              status: nextStatus,
+              endTime: nextStatus === 'completed' || nextStatus === 'failed' ? new Date() : job.endTime,
+              error: update.data.error ?? job.error
+            }
+          }
+          return job
+        }))
+      }
+    }
+
+    // Subscribe to real-time updates
+    realTimeTransferService.onUpdate(handleRealTimeUpdate)
+
+    return () => {
+      realTimeTransferService.offUpdate(handleRealTimeUpdate)
+    }
+  }, [realTimeTransferService])
 
   // Helper function to clean and validate access tokens
   const cleanAccessToken = (token: string): string => {
@@ -491,6 +540,68 @@ export function useCloudConnections() {
     }
   }
 
+  // Start a real-time transfer session
+  const startRealTimeTransfer = useCallback(async (
+    sourceService: string,
+    destinationService: string,
+    sourceFiles: FileItem[],
+    destinationPath: string,
+    enableRealTime: boolean = true
+  ): Promise<string> => {
+    console.log(`🚀 Starting ${enableRealTime ? 'real-time' : 'standard'} transfer`)
+    
+    if (enableRealTime) {
+      try {
+        // Get source and destination connections
+        const sourceConnection = connections.find(conn => conn.id === sourceService)
+        const destConnection = connections.find(conn => conn.id === destinationService)
+
+        if (!sourceConnection || !destConnection) {
+          throw new Error("Source or destination connection not found")
+        }
+
+        if (!sourceConnection.accessToken || !destConnection.accessToken) {
+          throw new Error("Source or destination access token not available")
+        }
+
+        // Start real-time transfer session
+        const sessionId = await realTimeTransferService.startTransferSession(
+          sourceConnection,
+          destConnection,
+          sourceFiles
+        )
+
+        // Create transfer job for UI
+        const jobId = `realtime_${sessionId}`
+        const newJob: TransferJob = {
+          id: jobId,
+          sourceService,
+          destinationService,
+          sourceFiles,
+          destinationPath,
+          status: "transferring",
+          progress: 0,
+          startTime: new Date(),
+          isRealTime: true,
+          sessionId: sessionId
+        }
+
+        setTransferJobs(prev => [...prev, newJob])
+        setActiveSessions(prev => [...prev, sessionId])
+
+        console.log(`✅ Real-time transfer session started: ${sessionId}`)
+        return jobId
+
+      } catch (error) {
+        console.error("❌ Failed to start real-time transfer:", error)
+        throw error
+      }
+    } else {
+      // Fall back to standard transfer
+      return await startTransfer(sourceService, destinationService, sourceFiles, destinationPath)
+    }
+  }, [connections, realTimeTransferService])
+
   // Start a transfer job
   const startTransfer = useCallback(async (
     sourceService: string,
@@ -513,38 +624,254 @@ export function useCloudConnections() {
 
     setTransferJobs(prev => [...prev, newJob])
 
-    // Simulate transfer progress
-    setTimeout(() => {
+    try {
+      // Get source and destination connections
+      const sourceConnection = connections.find(conn => conn.id === sourceService)
+      const destConnection = connections.find(conn => conn.id === destinationService)
+
+      console.log(`🔍 Transfer connections debug:`, {
+        sourceServiceId: sourceService,
+        destinationServiceId: destinationService,
+        sourceConnection: sourceConnection ? {
+          id: sourceConnection.id,
+          provider: sourceConnection.provider,
+          connected: sourceConnection.connected,
+          hasToken: !!sourceConnection.accessToken,
+          tokenLength: sourceConnection.accessToken?.length || 0,
+          tokenPreview: sourceConnection.accessToken?.substring(0, 20) + '...'
+        } : null,
+        destConnection: destConnection ? {
+          id: destConnection.id,
+          provider: destConnection.provider,
+          connected: destConnection.connected,
+          hasToken: !!destConnection.accessToken,
+          tokenLength: destConnection.accessToken?.length || 0,
+          tokenPreview: destConnection.accessToken?.substring(0, 20) + '...'
+        } : null
+      })
+
+      if (!sourceConnection || !destConnection) {
+        throw new Error("Source or destination connection not found")
+      }
+
+      if (!sourceConnection.accessToken || !destConnection.accessToken) {
+        throw new Error("Source or destination access token not available")
+      }
+
+      // Update status to transferring
       setTransferJobs(prev => 
         prev.map(job => 
           job.id === jobId 
-            ? { ...job, status: "transferring", progress: 25 }
+            ? { ...job, status: "transferring", progress: 0 }
             : job
         )
       )
-    }, 1000)
 
-    setTimeout(() => {
-      setTransferJobs(prev => 
-        prev.map(job => 
-          job.id === jobId 
-            ? { ...job, progress: 50 }
-            : job
-        )
-      )
-    }, 2000)
+      // Import services dynamically
+      const { createGoogleDriveService } = await import("@/lib/google-drive")
+      const { createOneDriveService } = await import("@/lib/onedrive")
 
-    setTimeout(() => {
-      setTransferJobs(prev => 
-        prev.map(job => 
-          job.id === jobId 
-            ? { ...job, progress: 75 }
-            : job
-        )
-      )
-    }, 3000)
+      // Create service instances based on source and destination
+      let sourceServiceInstance: any = null
+      let destServiceInstance: any = null
 
-    setTimeout(() => {
+      // Create source service
+      if (sourceConnection.provider === "google") {
+        sourceServiceInstance = createGoogleDriveService(sourceConnection)
+        console.log(`🔧 Created Google Drive source service:`, !!sourceServiceInstance)
+      } else if (sourceConnection.provider === "microsoft") {
+        sourceServiceInstance = createOneDriveService(sourceConnection)
+        console.log(`🔧 Created OneDrive source service:`, !!sourceServiceInstance)
+      }
+
+      // Create destination service
+      if (destConnection.provider === "google") {
+        destServiceInstance = createGoogleDriveService(destConnection)
+        console.log(`🔧 Created Google Drive destination service:`, !!destServiceInstance)
+      } else if (destConnection.provider === "microsoft") {
+        destServiceInstance = createOneDriveService(destConnection)
+        console.log(`🔧 Created OneDrive destination service:`, !!destServiceInstance)
+      }
+
+      console.log(`🔍 Service creation debug:`, {
+        sourceProvider: sourceConnection.provider,
+        destProvider: destConnection.provider,
+        sourceServiceCreated: !!sourceServiceInstance,
+        destServiceCreated: !!destServiceInstance,
+        sourceHasToken: !!sourceConnection.accessToken,
+        destHasToken: !!destConnection.accessToken
+      })
+
+      if (!sourceServiceInstance || !destServiceInstance) {
+        throw new Error(`Failed to create service instances. Source: ${!!sourceServiceInstance}, Destination: ${!!destServiceInstance}`)
+      }
+
+      // Validate tokens before proceeding
+      console.log(`🔍 Validating tokens before transfer:`, {
+        googleToken: {
+          length: sourceConnection.accessToken?.length || 0,
+          preview: sourceConnection.accessToken?.substring(0, 20) + '...',
+          hasDots: sourceConnection.accessToken?.includes('.') || false,
+          startsWithEy: sourceConnection.accessToken?.startsWith('ey') || false
+        },
+        oneDriveToken: {
+          length: destConnection.accessToken?.length || 0,
+          preview: destConnection.accessToken?.substring(0, 20) + '...',
+          hasDots: destConnection.accessToken?.includes('.') || false,
+          startsWithEy: destConnection.accessToken?.startsWith('ey') || false
+        }
+      })
+
+      // Check if OneDrive token is expired; refresh if needed
+      if (destConnection.provider === "microsoft" && destConnection.refreshToken) {
+        const isExpired = !!(destConnection.expiresAt && Date.now() > destConnection.expiresAt)
+        
+        if (isExpired) {
+          console.log(`🔄 OneDrive token needs refresh due to expiry`)
+          
+          try {
+            const refreshResp = await fetch("/api/auth/onedrive/token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: destConnection.refreshToken })
+            })
+            
+            if (refreshResp.ok) {
+              const refreshed = await refreshResp.json()
+              const newAccessToken = refreshed.access_token
+              const newRefreshToken = refreshed.refresh_token || destConnection.refreshToken
+              const newExpiresAt = Date.now() + (refreshed.expires_in * 1000)
+              
+              if (newAccessToken) {
+                console.log(`✅ OneDrive token refreshed successfully`)
+                
+                // Update the connection in state
+                setConnections(prev => {
+                  const updated = prev.map(c => c.id === destConnection.id ? {
+                    ...c,
+                    accessToken: newAccessToken,
+                    refreshToken: newRefreshToken,
+                    expiresAt: newExpiresAt,
+                    status: "connected" as const,
+                    error: undefined
+                  } : c)
+                  saveConnections(updated)
+                  return updated
+                })
+                
+                // Update the local reference
+                destConnection.accessToken = newAccessToken
+                destConnection.refreshToken = newRefreshToken
+                destConnection.expiresAt = newExpiresAt
+                
+                // Recreate the destination service with the new token
+                if (destConnection.provider === "microsoft") {
+                  const { createOneDriveService: createOneDriveServiceNew } = await import("@/lib/onedrive")
+                  const newOneDriveService = createOneDriveServiceNew(destConnection)
+                  if (newOneDriveService) {
+                    destServiceInstance = newOneDriveService
+                  }
+                }
+              }
+            } else {
+              const errorText = await refreshResp.text()
+              console.error(`❌ OneDrive token refresh failed:`, errorText)
+              throw new Error("Failed to refresh OneDrive token")
+            }
+          } catch (refreshError) {
+            console.error(`❌ OneDrive token refresh error:`, refreshError)
+            throw new Error("Failed to refresh OneDrive token")
+          }
+        }
+      }
+
+      // Transfer each file
+      const totalFiles = sourceFiles.length
+      let transferredFiles = 0
+
+      for (const file of sourceFiles) {
+        try {
+          console.log(`🔄 Starting transfer for: ${file.name}`)
+          console.log(`📊 File size: ${file.size || 'Unknown'}`)
+          
+          // Update progress - Starting download (25%)
+          const downloadProgress = Math.round((transferredFiles / totalFiles) * 100 + 25)
+          setTransferJobs(prev => 
+            prev.map(job => 
+              job.id === jobId 
+                ? { ...job, progress: downloadProgress }
+                : job
+            )
+          )
+          
+          // Download file from source service with timeout
+          console.log(`📥 Downloading ${file.name} from ${sourceConnection.provider}...`)
+          let fileData: ArrayBuffer
+          
+          const downloadPromise = sourceConnection.provider === "google" 
+            ? sourceServiceInstance.downloadFile(file.id)
+            : sourceConnection.provider === "microsoft"
+            ? sourceServiceInstance.downloadFile(file.id)
+            : Promise.reject(new Error(`Unsupported source provider: ${sourceConnection.provider}`))
+          
+          // Add timeout to prevent hanging
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Download timeout after 60 seconds')), 60000)
+          )
+          
+          fileData = await Promise.race([downloadPromise, timeoutPromise]) as ArrayBuffer
+          
+          console.log(`✅ Downloaded ${file.name}: ${fileData.byteLength} bytes`)
+          
+          // Update progress - Download complete, starting upload (50%)
+          const uploadProgress = Math.round((transferredFiles / totalFiles) * 100 + 50)
+          setTransferJobs(prev => 
+            prev.map(job => 
+              job.id === jobId 
+                ? { ...job, progress: uploadProgress }
+                : job
+            )
+          )
+          
+          // Upload file to destination service with timeout
+          console.log(`📤 Uploading ${file.name} to ${destConnection.provider}...`)
+          
+          const uploadPromise = destConnection.provider === "google"
+            ? destServiceInstance.uploadFile(fileData, file.name, destinationPath)
+            : destConnection.provider === "microsoft"
+            ? destServiceInstance.uploadFile(fileData, file.name, destinationPath)
+            : Promise.reject(new Error(`Unsupported destination provider: ${destConnection.provider}`))
+          
+          // Add timeout to prevent hanging
+          const uploadTimeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Upload timeout after 60 seconds')), 60000)
+          )
+          
+          await Promise.race([uploadPromise, uploadTimeoutPromise])
+          
+          console.log(`✅ Uploaded ${file.name} successfully`)
+          
+          transferredFiles++
+          const progress = Math.round((transferredFiles / totalFiles) * 100)
+          
+          // Update progress
+          setTransferJobs(prev => 
+            prev.map(job => 
+              job.id === jobId 
+                ? { ...job, progress }
+                : job
+            )
+          )
+          
+          console.log(`🎉 Successfully transferred: ${file.name} (${transferredFiles}/${totalFiles})`)
+        } catch (fileError) {
+          console.error(`❌ Failed to transfer file ${file.name}:`, fileError)
+          console.error(`📋 Error details:`, fileError)
+          // Continue with other files
+        }
+      }
+
+      // Mark as completed
       setTransferJobs(prev => 
         prev.map(job => 
           job.id === jobId 
@@ -552,10 +879,23 @@ export function useCloudConnections() {
             : job
         )
       )
-    }, 4000)
+
+      console.log(`🎉 Transfer job ${jobId} completed successfully`)
+    } catch (error) {
+      console.error(`❌ Transfer job ${jobId} failed:`, error)
+      
+      // Mark as failed
+      setTransferJobs(prev => 
+        prev.map(job => 
+          job.id === jobId 
+            ? { ...job, status: "failed", error: error instanceof Error ? error.message : "Unknown error", endTime: new Date() }
+            : job
+        )
+      )
+    }
 
     return jobId
-  }, [])
+  }, [connections])
 
   // Pause a transfer job
   const pauseTransfer = useCallback((jobId: string) => {
@@ -617,19 +957,65 @@ export function useCloudConnections() {
     return { files: result.files, hasMore: result.hasMore }
   }, [getFiles])
 
+  // Stop real-time transfer session
+  const stopRealTimeTransfer = useCallback((sessionId: string) => {
+    console.log(`🛑 Stopping real-time transfer session: ${sessionId}`)
+    realTimeTransferService.stopTransferSession(sessionId)
+    setActiveSessions(prev => prev.filter(id => id !== sessionId))
+    
+    // Update transfer jobs
+    setTransferJobs(prev => 
+      prev.map(job => 
+        job.sessionId === sessionId 
+          ? { ...job, status: "completed" as const, endTime: new Date() }
+          : job
+      )
+    )
+  }, [realTimeTransferService])
+
+  // Get real-time transfer statistics
+  const getRealTimeStats = useCallback(() => {
+    return realTimeTransferService.getServiceStats()
+  }, [realTimeTransferService])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      // Stop all active sessions safely
+      activeSessions.forEach(sessionId => {
+        try {
+          realTimeTransferService.stopTransferSession(sessionId)
+        } catch (error) {
+          console.warn(`Failed to stop session ${sessionId}:`, error)
+        }
+      })
+      
+      // Cleanup service
+      try {
+        realTimeTransferService.cleanup()
+      } catch (error) {
+        console.warn('Failed to cleanup real-time transfer service:', error)
+      }
+    }
+  }, []) // Remove dependencies to avoid re-running
+
   return {
     connections,
     transferJobs,
     isLoading,
+    activeSessions,
     connectGoogleDrive,
     connectOneDrive,
     disconnectService,
     getFiles,
     loadMoreFiles,
     startTransfer,
+    startRealTimeTransfer,
     pauseTransfer,
     resumeTransfer,
     cancelTransfer,
+    stopRealTimeTransfer,
+    getRealTimeStats,
     resetConnections,
   }
 }

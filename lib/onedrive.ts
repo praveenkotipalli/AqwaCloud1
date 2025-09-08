@@ -44,19 +44,21 @@ export class OneDriveService {
     // Remove any whitespace or newlines that might have been added
     this.accessToken = accessToken.trim()
     
-    // Basic validation that token looks like a JWT
+    // Microsoft Graph API uses opaque access tokens, not JWT tokens
+    // These tokens don't contain dots and don't start with 'ey'
+    // This is normal behavior for Microsoft Graph API tokens
     if (!this.accessToken.includes('.')) {
-      console.warn('⚠️ Access token does not appear to be in JWT format')
+      console.log('ℹ️ Access token is opaque format (normal for Microsoft Graph API)')
     }
     
-    // Check if token starts with 'ey' (typical JWT header)
+    // Microsoft tokens don't start with 'ey' - this is expected
     if (!this.accessToken.startsWith('ey')) {
-      console.warn('⚠️ Access token does not start with expected JWT header')
+      console.log('ℹ️ Access token is Microsoft Graph API format (not JWT)')
     }
     
-    // Check token length (JWT tokens are typically 100+ characters)
-    if (this.accessToken.length < 100) {
-      console.warn(`⚠️ Access token seems too short (${this.accessToken.length} chars), expected 100+`)
+    // Check token length (Microsoft Graph API tokens are typically 100+ characters)
+    if (this.accessToken.length < 50) {
+      console.warn(`⚠️ Access token seems too short (${this.accessToken.length} chars), expected 50+`)
     }
     
     // Check for any obvious formatting issues
@@ -83,8 +85,8 @@ export class OneDriveService {
       cleaned: this.accessToken === accessToken ? 'no' : 'yes'
     })
     
-    // Decode and inspect the JWT token for debugging
-    this.decodeJWT(this.accessToken)
+    // Skip JWT decoding to avoid warnings with non-standard tokens
+    // this.decodeJWT(this.accessToken)
   }
 
   private async makeRequest(endpoint: string, params: Record<string, string> = {}) {
@@ -503,6 +505,162 @@ export class OneDriveService {
       }
       
       return false
+    }
+  }
+
+  // Download file content from OneDrive
+  async downloadFile(fileId: string): Promise<ArrayBuffer> {
+    console.log(`📥 Downloading file ${fileId} from OneDrive`)
+    
+    try {
+      // First get the download URL
+      const fileResponse = await this.makeRequest(`/me/drive/items/${fileId}`)
+      const downloadUrl = fileResponse['@microsoft.graph.downloadUrl']
+      
+      if (!downloadUrl) {
+        throw new Error('No download URL available for this file')
+      }
+      
+      console.log(`🌐 Download URL: ${downloadUrl}`)
+      
+      // Download the file content
+      const response = await fetch(downloadUrl)
+      
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status} ${response.statusText}`)
+      }
+      
+      const arrayBuffer = await response.arrayBuffer()
+      console.log(`✅ Downloaded ${arrayBuffer.byteLength} bytes from OneDrive`)
+      return arrayBuffer
+      
+    } catch (error) {
+      console.error(`❌ OneDrive download failed:`, error)
+      throw error
+    }
+  }
+
+  // Upload file to OneDrive
+  async uploadFile(fileData: ArrayBuffer, fileName: string, folderId: string = "root"): Promise<OneDriveFile> {
+    console.log(`📤 Uploading file ${fileName} to OneDrive folder ${folderId}`)
+    console.log(`📊 File size: ${fileData.byteLength} bytes`)
+    console.log(`🔑 Using access token:`, {
+      length: this.accessToken.length,
+      preview: this.accessToken.substring(0, 50) + '...',
+      hasDots: this.accessToken.includes('.'),
+      startsWithEy: this.accessToken.startsWith('ey')
+    })
+    
+    // Use the correct OneDrive upload approach with JSON and base64
+    try {
+      // Clean filename for URL safety
+      const cleanFileName = fileName.replace(/[<>:"/\\|?*]/g, '_')
+      
+      console.log(`📝 Original filename: ${fileName}`)
+      console.log(`📝 Clean filename: ${cleanFileName}`)
+      
+      // Convert file data to base64 efficiently
+      const uint8Array = new Uint8Array(fileData)
+      let binaryString = ''
+      const chunkSize = 8192 // Process in chunks to avoid stack overflow
+      
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        const chunk = uint8Array.slice(i, i + chunkSize)
+        binaryString += String.fromCharCode.apply(null, Array.from(chunk))
+      }
+      
+      const base64String = btoa(binaryString)
+      
+      console.log(`📊 File size: ${fileData.byteLength} bytes`)
+      console.log(`📊 Base64 size: ${base64String.length} characters`)
+      
+      // Use the correct OneDrive upload endpoint with JSON
+      const endpoint = folderId === "root" 
+        ? `/me/drive/root:/${cleanFileName}:/content`
+        : `/me/drive/items/${folderId}:/${cleanFileName}:/content`
+      
+      console.log(`🌐 Upload endpoint: ${this.baseUrl}${endpoint}`)
+      
+      // Convert base64 to binary for proper file upload
+      const binaryData = Uint8Array.from(atob(base64String), c => c.charCodeAt(0))
+      
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: binaryData
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`❌ OneDrive upload error: ${response.status} ${response.statusText}`)
+        console.error(`📄 Error details:`, errorText)
+        
+        // Try alternative approach - create item first, then upload content
+        if (response.status === 400 || response.status === 404) {
+          console.log(`🔄 Trying create-then-upload approach...`)
+          
+          try {
+            // First create the file item
+            const createResponse = await fetch(`${this.baseUrl}/me/drive/root/children`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                name: cleanFileName,
+                file: {},
+                '@microsoft.graph.conflictBehavior': 'rename'
+              })
+            })
+            
+            if (createResponse.ok) {
+              const createdItem = await createResponse.json()
+              console.log(`✅ Created file item:`, createdItem.id)
+              
+              // Now upload the content using binary data
+              const binaryData = Uint8Array.from(atob(base64String), c => c.charCodeAt(0))
+              const contentResponse = await fetch(`${this.baseUrl}/me/drive/items/${createdItem.id}/content`, {
+                method: 'PUT',
+                headers: {
+                  'Authorization': `Bearer ${this.accessToken}`,
+                  'Content-Type': 'application/octet-stream',
+                },
+                body: binaryData
+              })
+              
+              if (contentResponse.ok) {
+                const uploadedFile = await contentResponse.json()
+                console.log(`✅ Uploaded file ${fileName} to OneDrive (create-then-upload):`, uploadedFile.id)
+                return uploadedFile
+              } else {
+                const contentErrorText = await contentResponse.text()
+                console.error(`❌ Content upload failed: ${contentResponse.status} ${contentResponse.statusText}`)
+                console.error(`📄 Content error details:`, contentErrorText)
+              }
+            } else {
+              const createErrorText = await createResponse.text()
+              console.error(`❌ File creation failed: ${createResponse.status} ${createResponse.statusText}`)
+              console.error(`📄 Create error details:`, createErrorText)
+            }
+          } catch (createError) {
+            console.error(`❌ Create-then-upload approach failed:`, createError)
+          }
+        }
+        
+        throw new Error(`OneDrive upload error: ${response.status} ${response.statusText} - ${errorText}`)
+      }
+
+      const uploadedFile = await response.json()
+      console.log(`✅ Uploaded file ${fileName} to OneDrive:`, uploadedFile.id)
+      return uploadedFile
+      
+    } catch (error) {
+      console.error(`❌ OneDrive upload failed:`, error)
+      throw error
     }
   }
 
