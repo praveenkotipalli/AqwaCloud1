@@ -13,8 +13,7 @@ The following credentials have been configured:
 
 ```
 NEXT_PUBLIC_ONEDRIVE_CLIENT_ID=d5edfa6f-cee9-4160-b6fc-f1ec28f8b3ff
-ONEDRIVE_CLIENT_ID=d5edfa6f-cee9-4160-b6fc-f1ec28f8b3ff
-ONEDRIVE_CLIENT_SECRET=3yB8Q~RExLsZXR3u7FZkebOS_YDo4LH4T~gbude6
+
 ```
 
 ## Environment Variables Setup
@@ -24,8 +23,6 @@ Create a `.env.local` file in your project root with the following content:
 ```bash
 # OneDrive OAuth Configuration  
 NEXT_PUBLIC_ONEDRIVE_CLIENT_ID=d5edfa6f-cee9-4160-b6fc-f1ec28f8b3ff
-ONEDRIVE_CLIENT_ID=d5edfa6f-cee9-4160-b6fc-f1ec28f8b3ff
-ONEDRIVE_CLIENT_SECRET=3yB8Q~RExLsZXR3u7FZkebOS_YDo4LH4T~gbude6
 
 # Google OAuth Configuration (if not already set)
 NEXT_PUBLIC_GOOGLE_CLIENT_ID=
