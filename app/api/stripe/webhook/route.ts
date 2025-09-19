@@ -1,26 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { stripe, verifyStripeWebhookSignature } from '@/lib/stripe'
+import Stripe from 'stripe'
 import { createUserSubscription, updateUserSubscription, cancelUserSubscription } from '@/lib/firebase-subscriptions'
 import { creditWallet } from '@/lib/wallet'
 
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2023-10-16',
+})
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.text()
-    const signature = request.headers.get('stripe-signature')
+    const sig = request.headers.get('stripe-signature') as string
+    const rawBody = await request.text() // Stripe requires raw body
 
-    if (!signature) {
-      return NextResponse.json(
-        { error: 'No signature provided' },
-        { status: 400 }
-      )
+    if (!sig) {
+      console.error('No stripe signature provided')
+      return new NextResponse('No signature provided', { status: 400 })
     }
 
-    // Verify the webhook signature
-    const event = verifyStripeWebhookSignature(
-      body,
-      signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
-    )
+    let event
+    try {
+      event = stripe.webhooks.constructEvent(
+        rawBody,
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET!
+      )
+    } catch (err: any) {
+      console.error('Webhook signature verification failed:', err.message)
+      return new NextResponse(`Webhook Error: ${err.message}`, { status: 400 })
+    }
 
     console.log('Received webhook event:', event.type)
 
@@ -67,25 +74,40 @@ export async function POST(request: NextRequest) {
 async function handleCheckoutSessionCompleted(session: any) {
   try {
     console.log('Checkout session completed:', session.id)
+    console.log('Session metadata:', session.metadata)
+    console.log('Payment status:', session.payment_status)
+    console.log('Amount total:', session.amount_total)
 
     // Wallet top-up flow
     // We set metadata.purpose = 'wallet_topup' and metadata.userId when creating the session
     if (session.metadata?.purpose === 'wallet_topup' && session.payment_status === 'paid') {
       const userId = session.metadata.userId
       const amountCents = session.amount_total
+      
+      console.log(`Processing wallet top-up: userId=${userId}, amount=${amountCents} cents`)
+      
       if (userId && typeof amountCents === 'number' && amountCents > 0) {
         try {
           await creditWallet(userId, amountCents, 'Stripe top-up')
-          console.log(`Wallet credited for user ${userId}: ${amountCents} cents`)
+          console.log(`✅ Wallet credited successfully for user ${userId}: ${amountCents} cents`)
         } catch (e) {
-          console.error('Failed to credit wallet:', e)
+          console.error('❌ Failed to credit wallet:', e)
+          throw e // Re-throw to ensure webhook fails if wallet credit fails
         }
+      } else {
+        console.error('❌ Invalid wallet top-up data:', { userId, amountCents })
       }
+    } else {
+      console.log('Not a wallet top-up or payment not completed:', {
+        purpose: session.metadata?.purpose,
+        payment_status: session.payment_status
+      })
     }
 
     // Subscription flow handled by other events
   } catch (error) {
     console.error('Error handling checkout session completed:', error)
+    throw error // Re-throw to ensure webhook fails
   }
 }
 
