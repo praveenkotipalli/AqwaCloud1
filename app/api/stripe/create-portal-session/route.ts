@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     // Create billing portal session
     const session = await createBillingPortalSession(
       stripeCustomerId!,
-      `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard`,
+      `${process.env.NEXT_PUBLIC_APP_URL || 'https://aqwa-cloud1-7iaj.vercel.app'}/dashboard`,
       process.env.STRIPE_PORTAL_CONFIGURATION_ID
     )
 

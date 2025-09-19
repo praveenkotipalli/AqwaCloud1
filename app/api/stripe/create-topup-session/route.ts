@@ -29,8 +29,8 @@ export async function POST(request: NextRequest) {
           quantity: 1
         }
       ],
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/billing?status=success`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/billing?status=cancel`,
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://aqwa-cloud1-7iaj.vercel.app'}/billing?status=success`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://aqwa-cloud1-7iaj.vercel.app'}/billing?status=cancel`,
       metadata: {
         purpose: 'wallet_topup',
         userId
