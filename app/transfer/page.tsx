@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Progress } from "@/components/ui/progress"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -39,14 +40,22 @@ import {
   Calendar,
   Repeat,
   Loader2,
+  DollarSign,
 } from "lucide-react"
 import Link from "next/link"
 import { useAuth } from "@/hooks/use-auth"
+import { useSubscription } from "@/hooks/use-subscription"
 import { useRouter } from "next/navigation"
 import { useCloudConnections, FileItem } from "@/hooks/use-cloud-connections"
 import { GoogleDriveExplorer } from "@/components/google-drive-explorer"
 import { OneDriveExplorer } from "@/components/onedrive-explorer"
-import { ConnectionManager } from "@/components/connection-manager"
+import { BandwidthCalculator, TransferEstimate } from "@/lib/bandwidth-calculator"
+import { UsageLimitModal } from "@/components/usage-limit-modal"
+import { formatDataSize, bytesToGB } from "@/lib/subscription"
+import { getStripe } from "@/lib/stripe"
+import { PersistentTransfers } from "@/components/persistent-transfers"
+import { usePersistentTransfers } from "@/hooks/use-persistent-transfers"
+import { useWallet } from "@/hooks/use-wallet"
 
 interface TransferConfig {
   overwriteExisting: boolean
@@ -84,7 +93,8 @@ interface QueuedTransfer {
 }
 
 export default function TransferPage() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
+  const { subscription, usage, currentPlan, canTransfer, recordTransfer } = useSubscription()
   const router = useRouter()
   const { 
     connections, 
@@ -98,6 +108,12 @@ export default function TransferPage() {
     stopRealTimeTransfer,
     getRealTimeStats
   } = useCloudConnections()
+
+  // Persistent transfers hook
+  const { startTransfer: startPersistentTransfer } = usePersistentTransfers()
+
+  // Wallet hook
+  const { balance, formatBalance, estimateTransferCost, canAffordTransfer } = useWallet()
 
   const [sourceService, setSourceService] = useState<string>("")
   const [destinationService, setDestinationService] = useState<string>("")
@@ -113,11 +129,15 @@ export default function TransferPage() {
 
   const [enableRealTime, setEnableRealTime] = useState(true)
   const [realTimeStats, setRealTimeStats] = useState<any>(null)
+  const [transferEstimate, setTransferEstimate] = useState<TransferEstimate | null>(null)
+  const [bandwidthMBps, setBandwidthMBps] = useState(5)
 
   const [transferQueue, setTransferQueue] = useState<QueuedTransfer[]>([])
   const [showQueue, setShowQueue] = useState(false)
 
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
+  const [showUsageLimitModal, setShowUsageLimitModal] = useState(false)
+  const [loadingUpgrade, setLoadingUpgrade] = useState<string | null>(null)
   const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>({
     enabled: false,
     type: "once",
@@ -131,6 +151,48 @@ export default function TransferPage() {
 
   // Get connected services
   const connectedServices = connections.filter(conn => conn.connected)
+
+  // Calculate transfer estimate
+  const calculateTransferEstimate = () => {
+    if (selectedSourceFiles.length === 0 || !sourceService || !destinationService) {
+      setTransferEstimate(null)
+      return
+    }
+
+    const sourceConnection = getSelectedServiceConnection(sourceService)
+    const destConnection = getSelectedServiceConnection(destinationService)
+    
+    if (!sourceConnection || !destConnection) {
+      setTransferEstimate(null)
+      return
+    }
+
+    // Estimate file sizes (in bytes) - this is a rough estimate
+    // In a real implementation, you'd get actual file sizes from the API
+    const estimatedFileSizes = selectedSourceFiles.map(file => {
+      // Rough estimation based on file type and name
+      if (file.type === 'folder') return 0
+      if (file.name.endsWith('.jpg') || file.name.endsWith('.png')) return 2 * 1024 * 1024 // 2MB
+      if (file.name.endsWith('.pdf')) return 5 * 1024 * 1024 // 5MB
+      if (file.name.endsWith('.mp4')) return 50 * 1024 * 1024 // 50MB
+      if (file.name.endsWith('.docx')) return 1 * 1024 * 1024 // 1MB
+      return 2 * 1024 * 1024 // Default 2MB
+    })
+
+    const estimate = BandwidthCalculator.generateEstimate(
+      estimatedFileSizes,
+      sourceConnection.provider as 'google' | 'microsoft',
+      destConnection.provider as 'google' | 'microsoft',
+      bandwidthMBps
+    )
+
+    setTransferEstimate(estimate)
+  }
+
+  // Update estimate when files or services change
+  useEffect(() => {
+    calculateTransferEstimate()
+  }, [selectedSourceFiles, sourceService, destinationService, bandwidthMBps])
 
   // Handle file selection from source
   const handleSourceFileSelect = (files: FileItem[]) => {
@@ -189,6 +251,62 @@ export default function TransferPage() {
     } catch (error) {
       console.error("Failed to start transfer:", error)
       alert("Failed to start transfer")
+    }
+  }
+
+  // Start persistent transfer
+  const handleStartPersistentTransfer = async () => {
+    if (!sourceService || !destinationService || selectedSourceFiles.length === 0) {
+      alert("Please select source service, destination service, and source files")
+      return
+    }
+
+    try {
+      const sourceConnection = getSelectedServiceConnection(sourceService)
+      const destConnection = getSelectedServiceConnection(destinationService)
+      
+      if (!sourceConnection || !destConnection) {
+        alert("Invalid connection selected")
+        return
+      }
+
+      // Start persistent transfer for each selected file
+      for (const file of selectedSourceFiles) {
+        await startPersistentTransfer(sourceConnection, destConnection, file)
+      }
+
+      setSelectedSourceFiles([])
+      setSelectionSide(null)
+
+      console.log(`Persistent transfer started for ${selectedSourceFiles.length} files`)
+      alert(`Persistent transfer started! Your files will continue transferring even if you log out.`)
+    } catch (error) {
+      console.error("Failed to start persistent transfer:", error)
+      alert("Failed to start persistent transfer")
+    }
+  }
+
+  // Handle upgrade
+  const handleUpgrade = async (planId: string) => {
+    setLoadingUpgrade(planId)
+    try {
+      const response = await fetch('/api/stripe/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId })
+      })
+      
+      if (response.ok) {
+        const { url } = await response.json()
+        window.location.href = url
+      } else {
+        throw new Error('Failed to create checkout session')
+      }
+    } catch (error) {
+      console.error('Upgrade failed:', error)
+      alert('Failed to start upgrade process')
+    } finally {
+      setLoadingUpgrade(null)
     }
   }
 
@@ -298,9 +416,35 @@ export default function TransferPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Connection Manager */}
-        <div className="mb-8">
-          <ConnectionManager />
+        {/* Cloud Connections Status */}
+        <div className="mb-6">
+          <Card className="bg-white/5 border-white/20">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <h3 className="text-lg font-semibold text-white">Cloud Services</h3>
+                  <div className="flex items-center gap-2">
+                    {connectedServices.map((service) => (
+                      <div key={service.id} className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full">
+                        <img src={service.icon} alt={service.name} className="w-4 h-4 rounded" />
+                        <span className="text-white text-sm">{service.name}</span>
+                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                      </div>
+                    ))}
+                    {connectedServices.length === 0 && (
+                      <span className="text-slate-400 text-sm">No services connected</span>
+                    )}
+                  </div>
+                </div>
+                <Link href="/connections">
+                  <Button variant="outline" size="sm" className="border-white/20 text-white hover:bg-white/10">
+                    <Settings className="h-4 w-4 mr-2" />
+                    Manage Connections
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Transfer Configuration */}
@@ -385,6 +529,103 @@ export default function TransferPage() {
                     onCheckedChange={(checked) => setTransferConfig(prev => ({ ...prev, skipExisting: checked }))}
                   />
                   <Label htmlFor="skip" className="text-white text-sm">Skip Existing</Label>
+                </div>
+              </div>
+
+              {/* Transfer Estimate */}
+              {transferEstimate && (
+                <div className="border-t border-white/10 pt-4">
+                  <h4 className="text-lg font-semibold text-white mb-4">Transfer Estimate</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Bandwidth Information */}
+                    <div className="space-y-3">
+                      <h5 className="text-md font-medium text-white">Bandwidth & Time</h5>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Total Size:</span>
+                          <span className="text-white">{transferEstimate.bandwidth.totalGB} GB</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Estimated Time:</span>
+                          <span className="text-white">{transferEstimate.bandwidth.estimatedTimeFormatted}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Bandwidth:</span>
+                          <span className="text-white">{transferEstimate.bandwidth.bandwidthMBps} MB/s</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Connection Speed:</span>
+                          <span className="text-white">{transferEstimate.bandwidth.bandwidthMbps} Mbps</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Cost Analysis */}
+                    <div className="space-y-3">
+                      <h5 className="text-md font-medium text-white">Cost Analysis</h5>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Storage Cost:</span>
+                          <span className="text-white">${transferEstimate.cost.storageCost.toFixed(4)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Transfer Cost:</span>
+                          <span className="text-white">${transferEstimate.cost.egressCost.toFixed(4)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">API Cost:</span>
+                          <span className="text-white">${transferEstimate.cost.apiCost.toFixed(4)}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-white/10 pt-2">
+                          <span className="text-slate-400 font-medium">Total Cost:</span>
+                          <span className="text-white font-medium">${transferEstimate.cost.totalCost.toFixed(4)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recommendations */}
+                  {transferEstimate.recommendations.length > 0 && (
+                    <div className="mt-4">
+                      <h5 className="text-md font-medium text-white mb-2">Recommendations</h5>
+                      <div className="space-y-1">
+                        {transferEstimate.recommendations.map((rec, index) => (
+                          <div key={index} className="text-sm text-slate-300 flex items-start gap-2">
+                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full mt-2 flex-shrink-0"></div>
+                            <span>{rec}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Bandwidth Settings */}
+              <div className="border-t border-white/10 pt-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-lg font-semibold text-white">Bandwidth Settings</h4>
+                  <div className="text-sm text-slate-400">
+                    Current: {bandwidthMBps} MB/s ({BandwidthCalculator.getBandwidthTier(bandwidthMBps)})
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-4">
+                    <Label htmlFor="bandwidth" className="text-white text-sm">Connection Speed (MB/s):</Label>
+                    <Input
+                      id="bandwidth"
+                      type="number"
+                      min="0.1"
+                      max="100"
+                      step="0.1"
+                      value={bandwidthMBps}
+                      onChange={(e) => setBandwidthMBps(parseFloat(e.target.value) || 5)}
+                      className="w-24 bg-white/10 border-white/20 text-white"
+                    />
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Adjust this based on your internet connection speed for more accurate estimates
+                  </div>
                 </div>
               </div>
 
@@ -528,6 +769,55 @@ export default function TransferPage() {
           </div>
         </div>
 
+        {/* Wallet Balance & Transfer Cost */}
+        {selectedSourceFiles.length > 0 && (
+          <div className="mb-6">
+            <Card className="bg-white/5 border-white/20">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2">
+                      <DollarSign className="h-5 w-5 text-green-500" />
+                      <span className="text-sm font-medium">Wallet Balance:</span>
+                      <span className="text-lg font-bold text-green-500">{formatBalance()}</span>
+                    </div>
+                    <Separator orientation="vertical" className="h-6" />
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm font-medium">Transfer Cost:</span>
+                      <span className="text-lg font-bold text-blue-500">
+                        ${(estimateTransferCost(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) / 100).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {canAffordTransfer(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) ? (
+                      <Badge variant="default" className="bg-green-500">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Sufficient Balance
+                      </Badge>
+                    ) : (
+                      <Badge variant="destructive">
+                        <AlertCircle className="h-3 w-3 mr-1" />
+                        Insufficient Balance
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                {!canAffordTransfer(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) && (
+                  <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                    <p className="text-sm text-red-400">
+                      You need to top up your wallet to complete this transfer. 
+                      <Link href="/billing" className="underline ml-1 hover:text-red-300">
+                        Add funds now
+                      </Link>
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* Transfer Actions */}
         <div className="flex justify-center gap-4">
           <Button
@@ -538,6 +828,16 @@ export default function TransferPage() {
           >
             <ArrowLeftRight className="h-5 w-5 mr-2" />
             {enableRealTime ? 'Start Real-Time Transfer' : 'Start Transfer'}
+          </Button>
+
+          <Button
+            onClick={handleStartPersistentTransfer}
+            disabled={!sourceService || !destinationService || selectedSourceFiles.length === 0}
+            size="lg"
+            className="bg-green-600 hover:bg-green-700 text-white px-8"
+          >
+            <RefreshCw className="h-5 w-5 mr-2" />
+            Start Persistent Transfer
           </Button>
           
           {activeSessions.length > 0 && (
@@ -585,86 +885,162 @@ export default function TransferPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {transferJobs.map((job) => (
-                    <div key={job.id} className="flex items-center justify-between p-4 bg-white/5 rounded-lg">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-white font-medium">
-                            {job.sourceFiles.map(f => f.name).join(", ")}
-                          </span>
-                          <ArrowRight className="h-4 w-4 text-slate-400" />
-                          <span className="text-slate-400">{job.destinationService}</span>
-                          {job.isRealTime && (
-                            <Badge variant="outline" className="text-green-400 border-green-400">
-                              Real-Time
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <Progress value={job.progress} className="flex-1" />
-                          <span className="text-slate-400 text-sm">{job.progress}%</span>
-                        </div>
-                        {job.status === "transferring" && (
-                          <div className="text-sm text-blue-400 mb-2">
-                            {job.progress < 25 ? "📥 Downloading files..." : 
-                             job.progress < 75 ? "📤 Uploading files..." : 
-                             "🔄 Finalizing transfer..."}
+                  {transferJobs.map((job) => {
+                    // Calculate bandwidth and cost analysis for this specific job
+                    const jobFileSizes = job.sourceFiles.map(file => {
+                      // Estimate file sizes based on file type and name
+                      if (file.type === 'folder') return 0
+                      if (file.name.endsWith('.jpg') || file.name.endsWith('.png')) return 2 * 1024 * 1024 // 2MB
+                      if (file.name.endsWith('.pdf')) return 5 * 1024 * 1024 // 5MB
+                      if (file.name.endsWith('.mp4')) return 50 * 1024 * 1024 // 50MB
+                      if (file.name.endsWith('.docx')) return 1 * 1024 * 1024 // 1MB
+                      return 2 * 1024 * 1024 // Default 2MB
+                    })
+
+                    // Map service names to provider types
+                    const mapServiceToProvider = (service: string) => {
+                      if (service === 'google-drive') return 'google'
+                      if (service === 'onedrive') return 'microsoft'
+                      return service as 'google' | 'microsoft' | 'aws' | 'azure'
+                    }
+
+                    const jobEstimate = BandwidthCalculator.generateEstimate(
+                      jobFileSizes,
+                      mapServiceToProvider(job.sourceService),
+                      mapServiceToProvider(job.destinationService),
+                      bandwidthMBps
+                    )
+
+                    return (
+                      <div key={job.id} className="p-4 bg-white/5 rounded-lg">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-3">
+                              <span className="text-white font-medium">
+                                {job.sourceFiles.map(f => f.name).join(", ")}
+                              </span>
+                              <ArrowRight className="h-4 w-4 text-slate-400" />
+                              <span className="text-slate-400">{job.destinationService}</span>
+                              {job.isRealTime && (
+                                <Badge variant="outline" className="text-green-400 border-green-400">
+                                  Real-Time
+                                </Badge>
+                              )}
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div className="flex items-center gap-2 mb-3">
+                              <Progress value={job.progress} className="flex-1" />
+                              <span className="text-slate-400 text-sm">{job.progress}%</span>
+                            </div>
+
+                            {/* Transfer Status */}
+                            {job.status === "transferring" && (
+                              <div className="text-sm text-blue-400 mb-3">
+                                {job.progress < 25 ? "📥 Downloading files..." : 
+                                 job.progress < 75 ? "📤 Uploading files..." : 
+                                 "🔄 Finalizing transfer..."} • 
+                                {job.isRealTime ? "Real-time sync active" : "Standard transfer"}
+                              </div>
+                            )}
+
+                            {/* Bandwidth and Cost Analysis */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3 p-3 bg-white/5 rounded border border-white/10">
+                              <div className="space-y-2">
+                                <h4 className="text-sm font-medium text-white">Bandwidth Usage</h4>
+                                <div className="space-y-1 text-xs">
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400">Size:</span>
+                                    <span className="text-white">{jobEstimate.bandwidth.totalGB} GB</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400">Speed:</span>
+                                    <span className="text-white">{jobEstimate.bandwidth.bandwidthMBps} MB/s</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400">Time:</span>
+                                    <span className="text-white">{jobEstimate.bandwidth.estimatedTimeFormatted}</span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <h4 className="text-sm font-medium text-white">Cost Analysis</h4>
+                                <div className="space-y-1 text-xs">
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400">Storage:</span>
+                                    <span className="text-white">${jobEstimate.cost.storageCost.toFixed(4)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-400">Transfer:</span>
+                                    <span className="text-white">${jobEstimate.cost.egressCost.toFixed(4)}</span>
+                                  </div>
+                                  <div className="flex justify-between border-t border-white/10 pt-1">
+                                    <span className="text-slate-400 font-medium">Total:</span>
+                                    <span className="text-white font-medium">${jobEstimate.cost.totalCost.toFixed(4)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Status Badges */}
+                            <div className="flex items-center gap-2 text-sm text-slate-400">
+                              <Badge 
+                                variant={job.status === "completed" ? "default" : job.status === "failed" ? "destructive" : "secondary"}
+                                className="text-black"
+                              >
+                                {job.status}
+                              </Badge>
+                              {job.isRealTime && job.sessionId && (
+                                <Badge variant="outline" className="text-blue-400 border-blue-400">
+                                  Session: {job.sessionId.substring(0, 8)}...
+                                </Badge>
+                              )}
+                              {job.conflictResolution && (
+                                <Badge variant="outline" className="text-yellow-400 border-yellow-400">
+                                  Conflict Resolved
+                                </Badge>
+                              )}
+                              {job.error && (
+                                <span className="text-red-400">Error: {job.error}</span>
+                              )}
+                            </div>
                           </div>
-                        )}
-                        <div className="flex items-center gap-2 text-sm text-slate-400">
-                          <Badge 
-                            variant={job.status === "completed" ? "default" : job.status === "failed" ? "destructive" : "secondary"}
-                            className="text-black"
-                          >
-                            {job.status}
-                          </Badge>
-                          {job.isRealTime && job.sessionId && (
-                            <Badge variant="outline" className="text-blue-400 border-blue-400">
-                              Session: {job.sessionId.substring(0, 8)}...
-                            </Badge>
-                          )}
-                          {job.conflictResolution && (
-                            <Badge variant="outline" className="text-yellow-400 border-yellow-400">
-                              Conflict Resolved
-                            </Badge>
-                          )}
-                          {job.error && (
-                            <span className="text-red-400">Error: {job.error}</span>
-                          )}
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-2 ml-4">
+                            {job.status === "transferring" && (
+                              <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                            )}
+                            {job.status === "completed" && (
+                              <CheckCircle className="h-4 w-4 text-green-400" />
+                            )}
+                            {job.status === "failed" && (
+                              <AlertCircle className="h-4 w-4 text-red-400" />
+                            )}
+                            {job.isRealTime && job.sessionId ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => stopRealTimeTransfer(job.sessionId!)}
+                                className="text-red-400 hover:text-red-300"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => cancelTransfer(job.id)}
+                                className="text-red-400 hover:text-red-300"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 ml-4">
-                        {job.status === "transferring" && (
-                          <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-                        )}
-                        {job.status === "completed" && (
-                          <CheckCircle className="h-4 w-4 text-green-400" />
-                        )}
-                        {job.status === "failed" && (
-                          <AlertCircle className="h-4 w-4 text-red-400" />
-                        )}
-                        {job.isRealTime && job.sessionId ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => stopRealTimeTransfer(job.sessionId!)}
-                            className="text-red-400 hover:text-red-300"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => cancelTransfer(job.id)}
-                            className="text-red-400 hover:text-red-300"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </CardContent>
             </Card>
@@ -683,54 +1059,163 @@ export default function TransferPage() {
                   <p className="text-slate-400 text-center py-4">No transfers in queue</p>
                 ) : (
                   <div className="space-y-4">
-                    {transferQueue.map((transfer) => (
-                      <div key={transfer.id} className="flex items-center justify-between p-4 bg-white/5 rounded-lg">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="text-white font-medium">
-                              {transfer.sourceFiles.join(", ")}
-                            </span>
-                            <ArrowRight className="h-4 w-4 text-slate-400" />
-                            <span className="text-slate-400">{transfer.destinationService}</span>
+                    {transferQueue.map((transfer) => {
+                      // Calculate bandwidth and cost analysis for queued transfers
+                      const queueFileSizes = transfer.sourceFiles.map(fileName => {
+                        // Estimate file sizes based on file extension
+                        if (fileName.endsWith('.jpg') || fileName.endsWith('.png')) return 2 * 1024 * 1024 // 2MB
+                        if (fileName.endsWith('.pdf')) return 5 * 1024 * 1024 // 5MB
+                        if (fileName.endsWith('.mp4')) return 50 * 1024 * 1024 // 50MB
+                        if (fileName.endsWith('.docx')) return 1 * 1024 * 1024 // 1MB
+                        return 2 * 1024 * 1024 // Default 2MB
+                      })
+
+                      // Map service names to provider types
+                      const mapServiceToProvider = (service: string) => {
+                        if (service === 'google-drive') return 'google'
+                        if (service === 'onedrive') return 'microsoft'
+                        return service as 'google' | 'microsoft' | 'aws' | 'azure'
+                      }
+
+                      const queueEstimate = BandwidthCalculator.generateEstimate(
+                        queueFileSizes,
+                        mapServiceToProvider(transfer.sourceService),
+                        mapServiceToProvider(transfer.destinationService),
+                        bandwidthMBps
+                      )
+
+                      return (
+                        <div key={transfer.id} className="p-4 bg-white/5 rounded-lg">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="text-white font-medium">
+                                  {transfer.sourceFiles.join(", ")}
+                                </span>
+                                <ArrowRight className="h-4 w-4 text-slate-400" />
+                                <span className="text-slate-400">{transfer.destinationService}</span>
+                              </div>
+
+                              {/* Progress Bar */}
+                              <div className="flex items-center gap-2 mb-3">
+                                <Progress value={transfer.progress} className="flex-1" />
+                                <span className="text-slate-400 text-sm">{transfer.progress}%</span>
+                              </div>
+
+                              {/* Bandwidth and Cost Analysis */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3 p-3 bg-white/5 rounded border border-white/10">
+                                <div className="space-y-2">
+                                  <h4 className="text-sm font-medium text-white">Bandwidth Usage</h4>
+                                  <div className="space-y-1 text-xs">
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Size:</span>
+                                      <span className="text-white">{queueEstimate.bandwidth.totalGB} GB</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Speed:</span>
+                                      <span className="text-white">{queueEstimate.bandwidth.bandwidthMBps} MB/s</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Time:</span>
+                                      <span className="text-white">{queueEstimate.bandwidth.estimatedTimeFormatted}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <h4 className="text-sm font-medium text-white">Cost Analysis</h4>
+                                  <div className="space-y-1 text-xs">
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Storage:</span>
+                                      <span className="text-white">${queueEstimate.cost.storageCost.toFixed(4)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-slate-400">Transfer:</span>
+                                      <span className="text-white">${queueEstimate.cost.egressCost.toFixed(4)}</span>
+                                    </div>
+                                    <div className="flex justify-between border-t border-white/10 pt-1">
+                                      <span className="text-slate-400 font-medium">Total:</span>
+                                      <span className="text-white font-medium">${queueEstimate.cost.totalCost.toFixed(4)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Status Badge */}
+                              <div className="flex items-center gap-2">
+                                <Badge variant="secondary" className="text-white">
+                                  {transfer.status}
+                                </Badge>
+                              </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex items-center gap-2 ml-4">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  if (transfer.status === "paused") {
+                                    resumeTransfer(transfer.id)
+                                  } else if (transfer.status === "transferring") {
+                                    pauseTransfer(transfer.id)
+                                  }
+                                }}
+                                disabled={!["transferring", "paused"].includes(transfer.status)}
+                              >
+                                {transfer.status === "paused" ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => cancelTransfer(transfer.id)}
+                                className="text-red-400 hover:text-red-300"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </div>
-                          <Progress value={transfer.progress} className="w-full" />
                         </div>
-                        <div className="flex items-center gap-2 ml-4">
-                          <Badge variant="secondary" className="text-white">
-                            {transfer.status}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              if (transfer.status === "paused") {
-                                resumeTransfer(transfer.id)
-                              } else if (transfer.status === "transferring") {
-                                pauseTransfer(transfer.id)
-                              }
-                            }}
-                            disabled={!["transferring", "paused"].includes(transfer.status)}
-                          >
-                            {transfer.status === "paused" ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => cancelTransfer(transfer.id)}
-                            className="text-red-400 hover:text-red-300"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </CardContent>
             </Card>
           </div>
         )}
+
+        {/* Persistent Transfers */}
+        <div className="mt-8">
+          <Card className="bg-white/5 border-white/20">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <RefreshCw className="h-5 w-5" />
+                Persistent Transfers
+                <Badge variant="secondary" className="ml-2">
+                  Continues even when logged out
+                </Badge>
+              </CardTitle>
+              <CardDescription className="text-slate-400">
+                These transfers will continue running in the background even if you log out or close your browser.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PersistentTransfers />
+            </CardContent>
+          </Card>
+        </div>
       </div>
+
+      {/* Usage Limit Modal */}
+      <UsageLimitModal
+        isOpen={showUsageLimitModal}
+        onClose={() => setShowUsageLimitModal(false)}
+        currentUsage={usage || { dataTransferred: 0, transferCount: 0 }}
+        currentPlan={currentPlan}
+        transferSizeGB={bytesToGB(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0))}
+        onUpgrade={handleUpgrade}
+        loadingUpgrade={loadingUpgrade}
+      />
     </div>
   )
 }

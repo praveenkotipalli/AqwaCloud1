@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -27,6 +27,9 @@ import {
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { useAuth } from "@/hooks/use-auth"
+import { useCloudConnections } from "@/hooks/use-cloud-connections"
+import { db } from "@/lib/firebase"
+import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore"
 
 interface Transfer {
   id: string
@@ -46,10 +49,12 @@ interface Transfer {
 
 export default function TransfersPage() {
   const { isAuthenticated, user, loading } = useAuth()
+  const { transferHistory, transferJobs } = useCloudConnections()
   const router = useRouter()
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [dateFilter, setDateFilter] = useState("all")
+  const [fireHistory, setFireHistory] = useState<any[]>([])
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -57,85 +62,118 @@ export default function TransfersPage() {
     }
   }, [isAuthenticated, loading, router])
 
-  // Mock transfer data - in real app, this would come from API
-  const allTransfers: Transfer[] = [
-    {
-      id: "1",
-      date: "2 hours ago",
-      from: "Google Drive",
-      to: "OneDrive",
-      fromIcon: "🔵",
-      toIcon: "🔷",
-      size: "2.4 GB",
-      status: "completed",
-      cost: "$0.024",
-      files: 156,
-    },
-    {
-      id: "2",
-      date: "1 day ago",
-      from: "Dropbox",
-      to: "Google Drive",
-      fromIcon: "🔹",
-      toIcon: "🔵",
-      size: "890 MB",
-      status: "completed",
-      cost: "$0.009",
-      files: 43,
-    },
-    {
-      id: "3",
-      date: "3 days ago",
-      from: "OneDrive",
-      to: "AWS S3",
-      fromIcon: "🔷",
-      toIcon: "🟠",
-      size: "1.2 GB",
-      status: "failed",
-      cost: "$0.000",
-      files: 78,
-      errorMessage: "Authentication failed for AWS S3",
-    },
-    {
-      id: "4",
-      date: "5 days ago",
-      from: "Google Drive",
-      to: "Dropbox",
-      fromIcon: "🔵",
-      toIcon: "🔹",
-      size: "3.1 GB",
-      status: "in-progress",
-      progress: 65,
-      cost: "$0.031",
-      files: 234,
-    },
-    {
-      id: "5",
-      date: "1 week ago",
-      from: "AWS S3",
-      to: "OneDrive",
-      fromIcon: "🟠",
-      toIcon: "🔷",
-      size: "5.7 GB",
-      status: "paused",
-      progress: 23,
-      cost: "$0.013",
-      files: 412,
-    },
-    {
-      id: "6",
-      date: "Scheduled for tomorrow",
-      from: "Google Drive",
-      to: "AWS S3",
-      fromIcon: "🔵",
-      toIcon: "🟠",
-      size: "1.8 GB",
-      status: "scheduled",
-      cost: "$0.018",
-      files: 89,
-      scheduledFor: "Tomorrow at 2:00 AM",
-    },
-  ]
+  // Read transfer history from Firestore
+  useEffect(() => {
+    if (loading) return
+    if (!user?.id) return
+
+    const historyQ = query(
+      collection(db, 'users', user.id, 'transferHistory'),
+      orderBy('timestamp', 'desc')
+    )
+
+    const unsubHistory = onSnapshot(historyQ, snap => {
+      console.log('📊 Transfers page - Firestore data received:', snap.docs.length, 'documents')
+      const items = snap.docs.map(d => {
+        const data: any = d.data()
+        const ts = (data.timestamp instanceof Timestamp) ? data.timestamp.toMillis() : (data.timestamp || Date.now())
+        return {
+          id: d.id,
+          timestamp: ts,
+          fromService: data.fromService,
+          toService: data.toService,
+          totalBytes: data.totalBytes || 0,
+          costUsd: data.costUsd || 0,
+          status: data.status || "completed",
+          fileNames: data.fileNames || []
+        }
+      })
+      console.log('📊 Transfers page - Processed items:', items.length)
+      setFireHistory(items)
+    }, (error) => {
+      console.error('❌ Transfers page - Firestore error:', error)
+    })
+
+    return () => unsubHistory()
+  }, [user?.id, loading])
+
+  // Build transfers list from real history + live jobs
+  const allTransfers: Transfer[] = useMemo(() => {
+    const formatAgo = (ts: number) => {
+      const diff = Date.now() - ts
+      const mins = Math.floor(diff / 60000)
+      if (mins < 60) return `${mins} min${mins!==1?"s":""} ago`
+      const hrs = Math.floor(mins / 60)
+      if (hrs < 24) return `${hrs} hour${hrs!==1?"s":""} ago`
+      const days = Math.floor(hrs / 24)
+      return `${days} day${days!==1?"s":""} ago`
+    }
+
+    const iconFor = (service: string) => {
+      const s = service.toLowerCase()
+      if (s.includes('google')) return '🔵'
+      if (s.includes('one')) return '🔷'
+      if (s.includes('aws')) return '🟠'
+      return '📦'
+    }
+
+    const formatBytes = (bytes: number) => {
+      if (!bytes || bytes <= 0) return '—'
+      const units = ['B','KB','MB','GB','TB']
+      let i = 0
+      let n = bytes
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+      const value = i === 0 ? n : Math.round(n * 10) / 10
+      return `${value} ${units[i]}`
+    }
+
+    const liveBytesMap: Record<string, number> = (typeof window !== 'undefined' && (window as any).__aqwa_bytes) || {}
+
+    // Start from Firestore history (preferred) or local history as fallback
+    const historySource = (fireHistory.length ? fireHistory : transferHistory || []).slice().sort((a, b) => b.timestamp - a.timestamp)
+    const list: Transfer[] = historySource.map((t: any) => {
+      const jobMatch = transferJobs.find(j => j.id === t.id)
+      const isActive = jobMatch && jobMatch.status === 'transferring'
+      const liveBytes = (jobMatch && liveBytesMap[jobMatch.id]) || liveBytesMap[t.id] || 0
+      const bytes = isActive ? liveBytes : (t.totalBytes || liveBytes)
+      const from = t.fromService || jobMatch?.sourceService || 'unknown'
+      const to = t.toService || jobMatch?.destinationService || 'unknown'
+
+      return {
+        id: t.id,
+        date: formatAgo(t.timestamp),
+        from,
+        to,
+        fromIcon: iconFor(from),
+        toIcon: iconFor(to),
+        size: formatBytes(bytes),
+        status: (jobMatch?.status === 'transferring' ? 'in-progress' : (t.status || 'completed')) as Transfer['status'],
+        progress: jobMatch?.progress,
+        cost: t.costUsd ? `$${t.costUsd.toFixed(3)}` : (bytes ? `$${((bytes/(1024*1024*1024))*0.01).toFixed(3)}` : '$0.000'),
+        files: Array.isArray(t.fileNames) ? t.fileNames.length : (jobMatch?.sourceFiles?.length || 0)
+      }
+    })
+
+    // Include currently active jobs that might not be in history yet
+    transferJobs.filter(j => !historySource.some((h: any) => h.id === j.id)).forEach(j => {
+      const liveBytes = liveBytesMap[j.id] || 0
+      list.push({
+        id: j.id,
+        date: 'Just now',
+        from: j.sourceService,
+        to: j.destinationService,
+        fromIcon: iconFor(j.sourceService),
+        toIcon: iconFor(j.destinationService),
+        size: formatBytes(liveBytes),
+        status: 'in-progress',
+        progress: j.progress,
+        cost: liveBytes ? `$${((liveBytes/(1024*1024*1024))*0.01).toFixed(3)}` : '$0.000',
+        files: j.sourceFiles?.length || 0
+      })
+    })
+
+    return list
+  }, [transferHistory, transferJobs, fireHistory])
 
   const handleRestartTransfer = (transferId: string) => {
     console.log("[v0] Restarting transfer:", transferId)

@@ -172,7 +172,7 @@ export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }:
   }
 
   return (
-    <Card className="bg-white/5 border-white/20">
+    <Card className="bg-white/5 border-white/20 min-h-[560px]">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-white">
           <img 
@@ -268,7 +268,7 @@ export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }:
 
         {/* File List */}
         {!isLoading && !error && (
-          <div className="space-y-1">
+          <div className="space-y-1 max-h-[420px] overflow-y-auto pr-1">
             {files.length === 0 ? (
               <div className="text-center py-8 text-slate-400">
                 <FolderOpen className="h-12 w-12 mx-auto mb-2 opacity-50" />
@@ -320,19 +320,7 @@ export function GoogleDriveExplorer({ connection, onFileSelect, selectedFiles }:
           </div>
         )}
 
-        {/* Load More Button */}
-        {hasMore && !isLoading && (
-          <div className="text-center pt-4">
-            <Button
-              onClick={loadMoreFiles}
-              variant="outline"
-              size="sm"
-              className="border-white/20 text-white hover:bg-white/10"
-            >
-              Load More Files
-            </Button>
-          </div>
-        )}
+        {/* Load More Button intentionally removed for Google Drive */}
       </CardContent>
     </Card>
   )

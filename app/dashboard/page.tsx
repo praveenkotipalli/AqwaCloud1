@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useMemo, useState, Suspense } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,11 +21,23 @@ import {
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { useAuth } from "@/hooks/use-auth"
+import { useSubscription } from "@/hooks/use-subscription"
+import { useCloudConnections } from "@/hooks/use-cloud-connections"
+import { CountryFlag } from "@/components/country-flag"
 import Image from "next/image"
+import { db, auth } from "@/lib/firebase"
+import { collection, doc, limit, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore"
+import { useSearchParams } from "next/navigation"
 
-export default function DashboardPage() {
+function DashboardContent() {
   const { isAuthenticated, user, loading, logout } = useAuth()
+  const { subscription, usage, currentPlan, refreshSubscription } = useSubscription()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { connections, transferJobs, transferHistory, getRealTimeStats } = useCloudConnections()
+  const [rtStats, setRtStats] = useState<any>(null)
+  const [fireHistory, setFireHistory] = useState<any[]>([])
+  const [fireMetrics, setFireMetrics] = useState<null | { monthTransfers?: number; monthBytes?: number; monthCost?: number; totalTransfers?: number; totalBytes?: number; totalCost?: number }>(null)
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -33,101 +45,300 @@ export default function DashboardPage() {
     }
   }, [isAuthenticated, loading, router])
 
+  // Handle successful payment callback
+  useEffect(() => {
+    const success = searchParams.get('success')
+    const plan = searchParams.get('plan')
+    
+    if (success === 'true' && plan && user) {
+      // Activate subscription without webhooks
+      const activateSubscription = async () => {
+        try {
+          const token = await auth.currentUser?.getIdToken()
+          const response = await fetch('/api/stripe/activate-subscription', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ 
+              sessionId: searchParams.get('session_id'),
+              userId: user.id 
+            })
+          })
+
+          if (response.ok) {
+            // Refresh subscription data
+            await refreshSubscription()
+            // Show success message
+            alert(`🎉 Successfully upgraded to ${plan} plan!`)
+            // Clean up URL
+            router.replace('/dashboard')
+          }
+        } catch (error) {
+          console.error('Error activating subscription:', error)
+          alert('Payment successful, but there was an error activating your subscription. Please contact support.')
+        }
+      }
+
+      activateSubscription()
+    }
+  }, [searchParams, user, refreshSubscription, router])
+
+  // Load Firestore data for this user (metrics + recent history)
+  useEffect(() => {
+    if (loading) return
+    if (!user?.id) return
+
+    // Metrics (aggregate) - live subscription
+    const metricsRef = doc(db, "users", user.id, "metrics", "aggregate")
+    const unsubMetrics = onSnapshot(metricsRef, snap => {
+      if (snap.exists()) {
+        const data = snap.data() as any
+        setFireMetrics({
+          monthTransfers: data.monthTransfers || 0,
+          monthBytes: data.monthBytes || 0,
+          monthCost: data.monthCost || 0,
+          totalTransfers: data.totalTransfers || 0,
+          totalBytes: data.totalBytes || 0,
+          totalCost: data.totalCost || 0,
+        })
+      } else {
+        setFireMetrics(null)
+      }
+    }, () => setFireMetrics(null))
+
+    // Recent transfer history (live)
+    const historyQ = query(
+      collection(db, "users", user.id, "transferHistory"),
+      orderBy("timestamp", "desc"),
+      limit(25)
+    )
+    const unsubHistory = onSnapshot(historyQ, snap => {
+      const items = snap.docs.map(d => {
+        const data: any = d.data()
+        const ts = (data.timestamp instanceof Timestamp) ? data.timestamp.toMillis() : (data.timestamp || Date.now())
+        return {
+          id: d.id,
+          timestamp: ts,
+          fromService: data.fromService,
+          toService: data.toService,
+          totalBytes: data.totalBytes || 0,
+          costUsd: data.costUsd || 0,
+          status: data.status || "completed",
+        }
+      })
+      setFireHistory(items)
+    })
+
+    return () => {
+      try { unsubMetrics() } catch {}
+      try { unsubHistory() } catch {}
+    }
+  }, [loading, user?.id])
+
   const handleLogoClick = () => {
     // Authenticated users clicking logo should go to dashboard
     router.push("/dashboard")
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center mx-auto mb-4">
-            <Cloud className="h-5 w-5 text-white animate-pulse" />
-          </div>
-          <p className="text-muted-foreground">Loading dashboard...</p>
-        </div>
-      </div>
-    )
-  }
+  // Defer conditional returns until after all hooks are called (Rules of Hooks)
 
-  if (!isAuthenticated) {
-    return null
-  }
+  // Poll real-time stats periodically
+  useEffect(() => {
+    const update = () => {
+      try {
+        const stats = getRealTimeStats?.()
+        setRtStats(stats)
+      } catch {}
+    }
+    update()
+    const id = setInterval(update, 5000)
+    return () => clearInterval(id)
+  }, [getRealTimeStats])
 
-  const currentUsage = user?.usage || { transfersThisMonth: 5, storageUsed: 2.4 }
+  // Derive live usage from transfer history
+  const derivedUsage = useMemo(() => {
+    const monthStart = new Date()
+    monthStart.setDate(1)
+    monthStart.setHours(0,0,0,0)
+
+    const historySource = (fireHistory.length ? fireHistory : transferHistory) || []
+    const monthly = historySource.filter((t: any) => t.timestamp >= monthStart.getTime())
+    const transfersThisMonth = monthly.length
+    const storageUsedGB = monthly.reduce((sum, t) => sum + (t.totalBytes || 0), 0) / (1024 * 1024 * 1024)
+
+    return { transfersThisMonth, storageUsed: Math.round(storageUsedGB * 100) / 100 }
+  }, [transferHistory, fireHistory])
+
+  const currentUsage = fireMetrics
+    ? {
+        transfersThisMonth: fireMetrics.monthTransfers || 0,
+        storageUsed: Math.round(((fireMetrics.monthBytes || 0) / (1024 * 1024 * 1024)) * 100) / 100,
+      }
+    : (user?.usage || derivedUsage)
   const usageLimit = 50 // GB per month for free tier
   const usagePercentage = (currentUsage.storageUsed / usageLimit) * 100
 
-  const recentTransfers = [
-    {
-      id: "1",
-      date: "2 hours ago",
-      from: "Google Drive",
-      to: "OneDrive",
-      fromIcon: "🔵",
-      toIcon: "🔷",
-      size: "2.4 GB",
-      status: "completed",
-    },
-    {
-      id: "2",
-      date: "1 day ago",
-      from: "Dropbox",
-      to: "Google Drive",
-      fromIcon: "🔹",
-      toIcon: "🔵",
-      size: "890 MB",
-      status: "completed",
-    },
-    {
-      id: "3",
-      date: "3 days ago",
-      from: "OneDrive",
-      to: "AWS S3",
-      fromIcon: "🔷",
-      toIcon: "🟠",
-      size: "1.2 GB",
-      status: "failed",
-    },
-  ]
+  const activeTransfers = useMemo(() => transferJobs.filter(j => j.status === 'transferring').length, [transferJobs])
+  const historyForStats = useMemo(() => (fireHistory.length ? fireHistory : transferHistory) || [], [fireHistory, transferHistory])
+  const completed = useMemo(() => historyForStats.filter((h: any) => h.status === 'completed').length, [historyForStats])
+  const failed = useMemo(() => historyForStats.filter((h: any) => h.status === 'failed').length, [historyForStats])
+  const successRate = useMemo(() => {
+    const total = completed + failed
+    if (total === 0) return 100
+    return Math.round((completed / total) * 1000) / 10
+  }, [completed, failed])
 
-  const connectedServices = [
-    { name: "Google Drive", icon: "🔵", connected: true, lastSync: "2 hours ago" },
-    { name: "OneDrive", icon: "🔷", connected: true, lastSync: "1 day ago" },
-    { name: "Dropbox", icon: "🔹", connected: false, lastSync: "Never" },
-    { name: "AWS S3", icon: "🟠", connected: true, lastSync: "3 days ago" },
-  ]
+  // Real cost calculations (Firestore if available; fallback to local history)
+  const costPerGB = 0.01
+  const { monthCostReal, totalCostReal } = useMemo(() => {
+    const monthStart = new Date()
+    monthStart.setDate(1)
+    monthStart.setHours(0,0,0,0)
+
+    // Derive from history by bytes and by stored per-transfer cost if present
+    const monthly = historyForStats.filter((t: any) => t.timestamp >= monthStart.getTime())
+    const monthlyBytes = monthly.reduce((sum: number, t: any) => sum + (t.totalBytes || 0), 0)
+    const monthlyCostFromBytes = (monthlyBytes / (1024*1024*1024)) * costPerGB
+    const monthlyCostFromEntries = monthly.reduce((sum: number, t: any) => sum + (t.costUsd || 0), 0)
+
+    const totalBytesAll = historyForStats.reduce((sum: number, t: any) => sum + (t.totalBytes || 0), 0)
+    const totalCostFromBytes = (totalBytesAll / (1024*1024*1024)) * costPerGB
+    const totalCostFromEntries = historyForStats.reduce((sum: number, t: any) => sum + (t.costUsd || 0), 0)
+
+    // Prefer Firestore aggregates if they exist and are > 0; otherwise fallback to derived
+    const monthCostAgg = fireMetrics?.monthCost || 0
+    const totalCostAgg = fireMetrics?.totalCost || 0
+
+    const monthCost = monthCostAgg > 0 ? monthCostAgg : Math.max(monthlyCostFromEntries, monthlyCostFromBytes)
+    const totalCost = totalCostAgg > 0 ? totalCostAgg : Math.max(totalCostFromEntries, totalCostFromBytes)
+
+    return {
+      monthCostReal: monthCost,
+      totalCostReal: totalCost
+    }
+  }, [fireMetrics, historyForStats])
+
+  const formatCost = (value: number) => {
+    if (!value || value === 0) return '$0.000'
+    if (value < 0.001) return '$0.001'
+    const rounded = Math.round(value * 1000) / 1000
+    return `$${rounded.toFixed(3)}`
+  }
+
+  const recentTransfers = useMemo(() => {
+    const formatAgo = (ts: number) => {
+      const diff = Date.now() - ts
+      const mins = Math.floor(diff / 60000)
+      if (mins < 60) return `${mins} min${mins!==1?'s':''} ago`
+      const hrs = Math.floor(mins / 60)
+      if (hrs < 24) return `${hrs} hour${hrs!==1?'s':''} ago`
+      const days = Math.floor(hrs / 24)
+      return `${days} day${days!==1?'s':''} ago`
+    }
+
+    const iconFor = (service: string) => {
+      if (service.includes('google')) return '🔵'
+      if (service.includes('one')) return '🔷'
+      if (service.includes('aws')) return '🟠'
+      return '📦'
+    }
+
+    const source = (fireHistory.length ? fireHistory : transferHistory) || []
+    const formatBytes = (bytes: number) => {
+      if (!bytes || bytes <= 0) return '—'
+      const units = ['B','KB','MB','GB','TB']
+      let i = 0
+      let n = bytes
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+      const value = i === 0 ? n : Math.round(n * 10) / 10
+      return `${value} ${units[i]}`
+    }
+
+    const liveBytesMap: Record<string, number> = (typeof window !== 'undefined' && (window as any).__aqwa_bytes) || {}
+
+    return source.slice(0, 4).map((t: any) => {
+      const jobMatch = transferJobs.find(j => j.id === t.id)
+      const isActive = jobMatch && jobMatch.status === 'transferring'
+      const liveBytes = (jobMatch && liveBytesMap[jobMatch.id]) || liveBytesMap[t.id] || 0
+      const bytes = isActive ? liveBytes : (t.totalBytes || liveBytes)
+      const from = t.fromService || jobMatch?.sourceService || 'unknown'
+      const to = t.toService || jobMatch?.destinationService || 'unknown'
+      const fromIcon = iconFor((from || '').toLowerCase())
+      const toIcon = iconFor((to || '').toLowerCase())
+      return {
+        id: t.id,
+        date: formatAgo(t.timestamp),
+        from,
+        to,
+        fromIcon,
+        toIcon,
+        size: formatBytes(bytes),
+        status: jobMatch?.status || t.status,
+      }
+    })
+  }, [transferHistory, fireHistory, transferJobs])
+
+  const connectedServices = useMemo(() => {
+    const iconFor = (name: string) => name.toLowerCase().includes('google') ? '🔵' : '🔷'
+    return (connections || []).map(c => ({
+      name: c.name,
+      icon: iconFor(c.name),
+      connected: c.connected,
+      lastSync: c.lastSync ? new Date(c.lastSync).toLocaleString() : '—'
+    }))
+  }, [connections])
 
   const quickStats = [
     {
       title: "Transfers This Month",
       value: currentUsage.transfersThisMonth.toString(),
       icon: <ArrowRightLeft className="h-4 w-4" />,
-      trend: "+2 from last month",
+      trend: `${activeTransfers} active • ${connections.filter(c=>c.connected).length} connected`,
     },
     {
       title: "Data Transferred",
       value: `${currentUsage.storageUsed} GB`,
       icon: <Download className="h-4 w-4" />,
-      trend: `${Math.round(usagePercentage)}% of limit used`,
+      trend: `${Math.round(usagePercentage)}% of ${usageLimit} GB`,
     },
     {
       title: "This Month's Cost",
-      value: `$${(currentUsage.storageUsed * 0.01).toFixed(3)}`,
+      value: formatCost(monthCostReal),
       icon: <DollarSign className="h-4 w-4" />,
-      trend: "Pay-per-use pricing",
+      trend: rtStats ? `${rtStats.activeTransfers || 0} in-queue` : '—',
+    },
+    {
+      title: "Total Cost",
+      value: formatCost(totalCostReal),
+      icon: <CreditCard className="h-4 w-4" />,
+      trend: 'lifetime',
     },
     {
       title: "Success Rate",
-      value: "98.5%",
+      value: `${successRate}%`,
       icon: <TrendingUp className="h-4 w-4" />,
-      trend: "Above average",
+      trend: `${completed} ok • ${failed} failed`,
     },
   ]
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Guarded content for loading and auth states */}
+      {loading && (
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-8 h-8 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center mx-auto mb-4">
+              <Cloud className="h-5 w-5 text-white animate-pulse" />
+            </div>
+            <p className="text-muted-foreground">Loading dashboard...</p>
+          </div>
+        </div>
+      )}
+      {!loading && !isAuthenticated && null}
+      {!loading && isAuthenticated && (
+      <>
       {/* Navigation */}
       <nav className="fixed top-0 w-full z-50 px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -148,6 +359,7 @@ export default function DashboardPage() {
               <LogOut className="h-4 w-4 mr-2" />
               Sign Out
             </Button>
+            <CountryFlag />
           </div>
         </div>
       </nav>
@@ -357,10 +569,8 @@ export default function DashboardPage() {
                           <div className="text-xs text-muted-foreground">Transfers</div>
                         </div>
                         <div>
-                          <div className="text-2xl font-bold gradient-text">
-                            ${(currentUsage.storageUsed * 0.01).toFixed(3)}
-                          </div>
-                          <div className="text-xs text-muted-foreground">Cost</div>
+                          <div className="text-2xl font-bold gradient-text">{formatCost(monthCostReal)}</div>
+                          <div className="text-xs text-muted-foreground">This Month Cost</div>
                         </div>
                       </div>
                     </div>
@@ -395,6 +605,16 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <DashboardContent />
+    </Suspense>
   )
 }

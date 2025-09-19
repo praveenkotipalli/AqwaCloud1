@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import { AuthProvider } from "@/hooks/use-auth"
+import { SubscriptionProvider } from "@/hooks/use-subscription"
 import { OfflineFallback } from "@/components/offline-fallback"
 import { FirebaseStatus } from "@/components/firebase-status"
 
@@ -28,9 +29,11 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable}`}>
       <body className="font-sans antialiased">
         <AuthProvider>
-          {children}
-          <OfflineFallback />
-          <FirebaseStatus />
+          <SubscriptionProvider>
+            {children}
+            <OfflineFallback />
+            <FirebaseStatus />
+          </SubscriptionProvider>
         </AuthProvider>
       </body>
     </html>

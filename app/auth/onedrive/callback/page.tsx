@@ -223,17 +223,18 @@ function OneDriveCallbackContent() {
 
   if (status === "loading") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Card className="w-full max-w-md">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md bg-white/10 backdrop-blur-lg border-white/20 text-white">
           <CardHeader className="text-center">
-            <CardTitle>Connecting to OneDrive</CardTitle>
-            <CardDescription>
-              Please wait while we complete your OneDrive connection...
-            </CardDescription>
+            <CardTitle className="flex items-center justify-center gap-2">
+              <Loader2 className="h-6 w-6 animate-spin" />
+              OneDrive Connection
+            </CardTitle>
           </CardHeader>
-          <CardContent className="text-center">
-            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
-            <p className="text-sm text-gray-600">Processing authorization...</p>
+          <CardContent className="space-y-4">
+            <div className="text-center">
+              <p className="text-slate-300">Connecting to OneDrive...</p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -242,30 +243,30 @@ function OneDriveCallbackContent() {
 
   if (status === "error") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Card className="w-full max-w-md">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md bg-white/10 backdrop-blur-lg border-white/20 text-white">
           <CardHeader className="text-center">
-            <CardTitle className="flex items-center justify-center gap-2 text-red-600">
-              <XCircle className="h-6 w-6" />
-              Connection Failed
+            <CardTitle className="flex items-center justify-center gap-2">
+              <XCircle className="h-6 w-6 text-red-400" />
+              OneDrive Connection
             </CardTitle>
-            <CardDescription>
-              We couldn't complete your OneDrive connection
-            </CardDescription>
           </CardHeader>
-          <CardContent className="text-center">
-            <p className="text-sm text-red-600 mb-4">{error}</p>
-            <div className="space-y-2">
+          <CardContent className="space-y-4">
+            <div className="text-center">
+              <p className="text-red-300">{error}</p>
+            </div>
+            <div className="flex gap-2">
               <Button 
                 onClick={() => router.push("/connections")}
-                className="w-full"
+                variant="outline" 
+                className="flex-1 border-white/20 text-white hover:bg-white/10"
               >
                 Back to Connections
               </Button>
               <Button 
                 variant="outline"
                 onClick={() => window.location.reload()}
-                className="w-full"
+                className="flex-1 border-white/20 text-white hover:bg-white/10"
               >
                 Try Again
               </Button>
@@ -277,27 +278,21 @@ function OneDriveCallbackContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <Card className="w-full max-w-md">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md bg-white/10 backdrop-blur-lg border-white/20 text-white">
         <CardHeader className="text-center">
-          <CardTitle className="flex items-center justify-center gap-2 text-green-600">
-            <CheckCircle className="h-6 w-6" />
-            Connected Successfully!
+          <CardTitle className="flex items-center justify-center gap-2">
+            <CheckCircle className="h-6 w-6 text-green-400" />
+            OneDrive Connection
           </CardTitle>
-          <CardDescription>
-            Your OneDrive account has been connected
-          </CardDescription>
         </CardHeader>
-        <CardContent className="text-center">
-          <p className="text-sm text-gray-600 mb-4">
-            Redirecting you back to the connections page...
-          </p>
-          <Button 
-            onClick={() => router.push("/connections")}
-            className="w-full"
-          >
-            Go to Connections
-          </Button>
+        <CardContent className="space-y-4">
+          <div className="text-center">
+            <p className="text-green-300">Successfully connected to OneDrive!</p>
+          </div>
+          <div className="text-center text-sm text-slate-400">
+            Redirecting to connections page...
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -307,11 +302,11 @@ function OneDriveCallbackContent() {
 export default function OneDriveCallbackPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Card className="w-full max-w-md">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md bg-white/10 backdrop-blur-lg border-white/20 text-white">
           <CardContent className="p-6 text-center">
-            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
-            <p className="text-sm text-gray-600">Loading...</p>
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-400" />
+            <p className="text-slate-300">Loading...</p>
           </CardContent>
         </Card>
       </div>

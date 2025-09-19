@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -20,10 +20,19 @@ import {
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { useAuth } from "@/hooks/use-auth"
+import { useSubscription } from "@/hooks/use-subscription"
+import { useWallet } from "@/hooks/use-wallet"
+import { formatCurrency, formatDataSize } from "@/lib/subscription"
+import { getStripe } from "@/lib/stripe"
+import { auth } from "@/lib/firebase"
 
 export default function BillingPage() {
   const { isAuthenticated, user, loading } = useAuth()
+  const { subscription, usage, currentPlan, refreshSubscription } = useSubscription()
+  const { balance, balanceDollars, isLoading: walletLoading, error: walletError, topUp, formatBalance, refreshBalance } = useWallet()
   const router = useRouter()
+  const [loadingPortal, setLoadingPortal] = useState(false)
+  const [loadingTopUp, setLoadingTopUp] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -48,9 +57,61 @@ export default function BillingPage() {
     return null
   }
 
-  const currentUsage = user?.usage || { transfersThisMonth: 0, storageUsed: 0 }
-  const monthlyLimit = user?.plan === "free" ? 10 : user?.plan === "pro" ? 100 : 1000
-  const usagePercentage = (currentUsage.transfersThisMonth / monthlyLimit) * 100
+  const handleManageBilling = async () => {
+    if (!user) return
+
+    try {
+      setLoadingPortal(true)
+      
+      // Get Firebase auth token
+      const token = await auth.currentUser?.getIdToken()
+      
+      // Create billing portal session
+      const response = await fetch('/api/stripe/create-portal-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (!response.ok) {
+        let reason = 'Failed to create billing portal session'
+        try {
+          const data = await response.json()
+          if (data?.error) reason = data.error
+        } catch {}
+        throw new Error(reason)
+      }
+
+      const { url } = await response.json()
+      
+      // Redirect to Stripe billing portal
+      window.location.href = url
+    } catch (error) {
+      console.error('Error opening billing portal:', error)
+      // Handle error (show toast, etc.)
+    } finally {
+      setLoadingPortal(false)
+    }
+  }
+
+  const handleTopUp = async (amountCents: number) => {
+    try {
+      setLoadingTopUp(`${amountCents}`)
+      const url = await topUp(amountCents)
+      window.location.href = url
+    } catch (error) {
+      console.error('Error creating top-up session:', error)
+      alert('Failed to create top-up session')
+    } finally {
+      setLoadingTopUp(null)
+    }
+  }
+
+  const currentUsage = usage || { dataTransferred: 0, transferCount: 0 }
+  const monthlyLimit = currentPlan?.dataLimit || 1
+  const usagePercentage = (currentUsage.dataTransferred / monthlyLimit) * 100
 
   const recentTransfers = [
     {
@@ -83,10 +144,10 @@ export default function BillingPage() {
   ]
 
   const monthlyStats = {
-    totalTransfers: 8,
-    totalData: "12.4 GB",
-    totalCost: "$0.124",
-    avgTransferSize: "1.55 GB",
+    totalTransfers: currentUsage.transferCount,
+    totalData: formatDataSize(currentUsage.dataTransferred * 1024 * 1024 * 1024),
+    totalCost: currentPlan?.price ? formatCurrency(currentPlan.price) : "$0.00",
+    avgTransferSize: currentUsage.transferCount > 0 ? formatDataSize((currentUsage.dataTransferred / currentUsage.transferCount) * 1024 * 1024 * 1024) : "0 B",
   }
 
   return (
@@ -272,12 +333,90 @@ export default function BillingPage() {
                     <Badge variant="secondary">Default</Badge>
                   </div>
 
-                  <Button variant="outline" className="w-full bg-transparent" asChild>
-                    <Link href="/payment-methods">
-                      <Settings className="h-4 w-4 mr-2" />
-                      Manage Payment Methods
-                    </Link>
+                  <Button 
+                    variant="outline" 
+                    className="w-full bg-transparent" 
+                    onClick={handleManageBilling}
+                    disabled={loadingPortal}
+                  >
+                    <Settings className="h-4 w-4 mr-2" />
+                    {loadingPortal ? "Opening..." : "Manage Billing"}
                   </Button>
+                </CardContent>
+              </Card>
+
+              {/* Wallet Balance */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <DollarSign className="h-5 w-5 mr-2" />
+                    Wallet Balance
+                  </CardTitle>
+                  <CardDescription>Prepaid credits for transfers ($0.12/GB)</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {walletLoading ? (
+                    <div className="text-center py-4">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>
+                      <p className="text-sm text-muted-foreground mt-2">Loading balance...</p>
+                    </div>
+                  ) : walletError ? (
+                    <div className="text-center py-4">
+                      <p className="text-sm text-destructive">{walletError}</p>
+                      <Button variant="outline" size="sm" onClick={refreshBalance} className="mt-2">
+                        Retry
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-center p-4 rounded-lg border border-border/50 bg-muted/30">
+                        <div className="text-3xl font-bold gradient-text">{formatBalance()}</div>
+                        <p className="text-sm text-muted-foreground mt-1">Available balance</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium">Quick Top-up:</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleTopUp(1000)}
+                            disabled={loadingTopUp === '1000'}
+                          >
+                            {loadingTopUp === '1000' ? 'Loading...' : '$10'}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleTopUp(2000)}
+                            disabled={loadingTopUp === '2000'}
+                          >
+                            {loadingTopUp === '2000' ? 'Loading...' : '$20'}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleTopUp(5000)}
+                            disabled={loadingTopUp === '5000'}
+                          >
+                            {loadingTopUp === '5000' ? 'Loading...' : '$50'}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleTopUp(10000)}
+                            disabled={loadingTopUp === '10000'}
+                          >
+                            {loadingTopUp === '10000' ? 'Loading...' : '$100'}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-muted-foreground text-center">
+                        Transfers cost $0.12 per GB. Balance is automatically deducted when transfers complete.
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -293,15 +432,26 @@ export default function BillingPage() {
                   <div className="space-y-3">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Billing Date</span>
-                      <span className="font-medium">Feb 1, 2024</span>
+                      <span className="font-medium">
+                        {subscription?.currentPeriodEnd ? 
+                          new Date(subscription.currentPeriodEnd).toLocaleDateString() : 
+                          "N/A"
+                        }
+                      </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Current Usage</span>
-                      <span className="font-medium">{monthlyStats.totalCost}</span>
+                      <span className="text-muted-foreground">Plan</span>
+                      <span className="font-medium">{currentPlan?.name || "Free"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Usage</span>
+                      <span className="font-medium">
+                        {formatDataSize(currentUsage.dataTransferred * 1024 * 1024 * 1024)} / {formatDataSize(monthlyLimit * 1024 * 1024 * 1024)}
+                      </span>
                     </div>
                     <Separator />
                     <div className="flex justify-between font-medium">
-                      <span>Estimated Total</span>
+                      <span>Monthly Cost</span>
                       <span className="gradient-text">{monthlyStats.totalCost}</span>
                     </div>
                   </div>

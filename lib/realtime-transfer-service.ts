@@ -163,6 +163,7 @@ export class RealTimeTransferService {
     // Notify WebSocket server that real file monitoring is starting
     this.realTimeSync.notifyFileMonitoringStarted()
     
+    let cumulativeBytesForJob = 0
     for (const file of files) {
       try {
         await this.fileMonitor.startMonitoring(
@@ -204,6 +205,7 @@ export class RealTimeTransferService {
   // Perform direct file transfer
   private async performDirectTransfer(session: TransferSession, job: SyncJob): Promise<void> {
     try {
+      let cumulativeBytesForJob = 0
       console.log(`🔄 Starting direct transfer for: ${job.sourceFile.name}`)
       
       // Update progress - Starting download (25%)
@@ -266,7 +268,9 @@ export class RealTimeTransferService {
       
       const uploadPromise = (async () => {
         try {
-          return await session.destService.uploadFile(fileData, job.sourceFile.name, 'root')
+          const uploaded = await session.destService.uploadFile(fileData, job.sourceFile.name, 'root')
+          try { cumulativeBytesForJob += (fileData as ArrayBuffer).byteLength } catch {}
+          return uploaded
         } catch (err: any) {
           const message = err instanceof Error ? err.message : String(err)
           const looks401 = message.includes('401') || message.includes('Unauthorized')
@@ -295,7 +299,9 @@ export class RealTimeTransferService {
                     session.destService = newService
                   }
                   console.log('✅ OneDrive token refreshed. Retrying upload...')
-                  return await session.destService.uploadFile(fileData, job.sourceFile.name, 'root')
+                  const uploadedRetry = await session.destService.uploadFile(fileData, job.sourceFile.name, 'root')
+                  try { cumulativeBytesForJob += (fileData as ArrayBuffer).byteLength } catch {}
+                  return uploadedRetry
                 }
               } else {
                 const t = await resp.text()
@@ -314,6 +320,21 @@ export class RealTimeTransferService {
       
       await Promise.race([uploadPromise, uploadTimeoutPromise])
       console.log(`✅ Uploaded ${job.sourceFile.name} successfully`)
+      // Notify bytes transferred for this file
+      try {
+        this.notifyUpdateListeners({
+          id: `progress_${job.id}`,
+          type: 'progress',
+          data: {
+            jobId: job.id,
+            sessionId: session.id,
+            bytes: (fileData as ArrayBuffer).byteLength,
+            status: job.status,
+            fileName: job.sourceFile.name
+          },
+          timestamp: new Date()
+        })
+      } catch {}
       // Update progress - Upload complete, finalizing (90%)
       job.progress = 90
       this.notifyUpdateListeners({
@@ -324,7 +345,8 @@ export class RealTimeTransferService {
           sessionId: session.id,
           progress: job.progress,
           status: job.status,
-          fileName: job.sourceFile.name
+          fileName: job.sourceFile.name,
+          totalBytes: cumulativeBytesForJob
         },
         timestamp: new Date()
       })
@@ -341,7 +363,8 @@ export class RealTimeTransferService {
           sessionId: session.id,
           progress: job.progress,
           status: job.status,
-          fileName: job.sourceFile.name
+          fileName: job.sourceFile.name,
+          totalBytes: cumulativeBytesForJob
         },
         timestamp: new Date()
       })

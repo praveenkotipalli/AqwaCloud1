@@ -1,34 +1,38 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useState, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
-import { Cloud, ArrowLeft, Check, Zap, Shield, CheckCircle, CreditCard, ArrowRight } from "lucide-react"
+import { Progress } from "@/components/ui/progress"
+import {
+  Cloud,
+  ArrowLeft,
+  Check,
+  Loader2,
+  AlertCircle,
+  Zap,
+  Shield,
+  Users,
+} from "lucide-react"
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { useAuth } from "@/hooks/use-auth"
+import { useSubscription } from "@/hooks/use-subscription"
+import { SUBSCRIPTION_PLANS, formatCurrency, formatDataSize } from "@/lib/subscription"
+import { getStripe } from "@/lib/stripe"
+import { auth } from "@/lib/firebase"
 
-interface Plan {
-  id: string
-  name: string
-  price: number
-  period: string
-  description: string
-  features: string[]
-  popular?: boolean
-  current?: boolean
-}
-
-export default function UpgradePage() {
+function UpgradeContent() {
   const { isAuthenticated, user, loading } = useAuth()
+  const { subscription, usage, currentPlan, refreshSubscription } = useSubscription()
   const router = useRouter()
-  const [selectedPlan, setSelectedPlan] = useState<string>("")
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [showSuccess, setShowSuccess] = useState(false)
-  const [paymentStep, setPaymentStep] = useState<"select" | "confirm" | "processing" | "success">("select")
+  const searchParams = useSearchParams()
+  const [loadingUpgrade, setLoadingUpgrade] = useState<string | null>(null)
+  const [selectedPlan, setSelectedPlan] = useState<string | null>(null)
+
+  const planParam = searchParams.get('plan')
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -36,77 +40,49 @@ export default function UpgradePage() {
     }
   }, [isAuthenticated, loading, router])
 
-  const plans: Plan[] = [
-    {
-      id: "free",
-      name: "Free",
-      price: 0,
-      period: "forever",
-      description: "Perfect for trying out AqwaCloud",
-      features: [
-        "Up to 1 GB transfers per month",
-        "Basic cloud service connections",
-        "Email support",
-        "Standard transfer speed",
-      ],
-      current: user?.plan === "free" || !user?.plan,
-    },
-    {
-      id: "pro",
-      name: "Pro",
-      price: 9.99,
-      period: "month",
-      description: "Great for individuals and small teams",
-      features: [
-        "Up to 100 GB transfers per month",
-        "All cloud service connections",
-        "Priority email support",
-        "Fast transfer speed",
-        "Transfer scheduling",
-        "Advanced analytics",
-      ],
-      popular: true,
-      current: user?.plan === "pro",
-    },
-    {
-      id: "enterprise",
-      name: "Enterprise",
-      price: 29.99,
-      period: "month",
-      description: "For businesses with high-volume needs",
-      features: [
-        "Unlimited transfers",
-        "All cloud service connections",
-        "24/7 phone & email support",
-        "Fastest transfer speed",
-        "Advanced scheduling & automation",
-        "Team management",
-        "Custom integrations",
-        "SLA guarantee",
-      ],
-      current: user?.plan === "enterprise",
-    },
-  ]
+  useEffect(() => {
+    if (planParam) {
+      setSelectedPlan(planParam)
+    }
+  }, [planParam])
 
-  const handleSelectPlan = (planId: string) => {
-    if (planId === "free" || planId === user?.plan) return
-    setSelectedPlan(planId)
-    setPaymentStep("confirm")
+  const handleUpgrade = async (planId: string) => {
+    if (!user) return
+
+    try {
+      setLoadingUpgrade(planId)
+      
+      // Get Firebase auth token
+      const token = await auth.currentUser?.getIdToken()
+      
+      // Create checkout session
+      const response = await fetch('/api/stripe/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ planId })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create checkout session')
+      }
+
+      const { sessionId } = await response.json()
+      
+      // Redirect to Stripe Checkout
+      const stripe = await getStripe()
+      if (stripe) {
+        await stripe.redirectToCheckout({ sessionId })
+      }
+    } catch (error) {
+      console.error('Error upgrading plan:', error)
+      // Handle error (show toast, etc.)
+    } finally {
+      setLoadingUpgrade(null)
+    }
   }
-
-  const handleConfirmUpgrade = () => {
-    setPaymentStep("processing")
-    setIsProcessing(true)
-
-    // Simulate payment processing
-    setTimeout(() => {
-      setPaymentStep("success")
-      setIsProcessing(false)
-      setShowSuccess(true)
-    }, 3000)
-  }
-
-  const selectedPlanDetails = plans.find((p) => p.id === selectedPlan)
 
   if (loading) {
     return (
@@ -115,7 +91,7 @@ export default function UpgradePage() {
           <div className="w-8 h-8 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center mx-auto mb-4">
             <Cloud className="h-5 w-5 text-white animate-pulse" />
           </div>
-          <p className="text-muted-foreground">Loading plans...</p>
+          <p className="text-muted-foreground">Loading...</p>
         </div>
       </div>
     )
@@ -125,176 +101,21 @@ export default function UpgradePage() {
     return null
   }
 
-  if (paymentStep === "success") {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="max-w-md mx-auto text-center">
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ duration: 0.5 }}
-            className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6"
-          >
-            <CheckCircle className="h-8 w-8 text-green-600" />
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-          >
-            <h1 className="text-3xl font-bold mb-4">Welcome to {selectedPlanDetails?.name}!</h1>
-            <p className="text-muted-foreground mb-8">
-              Your account has been successfully upgraded. You now have access to all {selectedPlanDetails?.name}{" "}
-              features.
-            </p>
-            <div className="space-y-4">
-              <Button className="w-full bg-accent hover:bg-accent/90" asChild>
-                <Link href="/dashboard">
-                  Go to Dashboard
-                  <ArrowRight className="h-4 w-4 ml-2" />
-                </Link>
-              </Button>
-              <Button variant="outline" className="w-full bg-transparent" asChild>
-                <Link href="/transfer">Start Your First Transfer</Link>
-              </Button>
-            </div>
-          </motion.div>
-        </div>
-      </div>
-    )
-  }
+  const currentUsage = usage || { dataTransferred: 0, transferCount: 0 }
+  const monthlyLimit = currentPlan?.dataLimit || 1
+  const usagePercentage = (currentUsage.dataTransferred / monthlyLimit) * 100
 
-  if (paymentStep === "processing") {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="max-w-md mx-auto text-center">
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 2, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
-            className="w-16 h-16 bg-gradient-to-r from-accent to-secondary rounded-full flex items-center justify-center mx-auto mb-6"
-          >
-            <CreditCard className="h-8 w-8 text-white" />
-          </motion.div>
-          <h1 className="text-3xl font-bold mb-4">Processing Payment...</h1>
-          <p className="text-muted-foreground">Please wait while we process your payment and upgrade your account.</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (paymentStep === "confirm") {
-    return (
-      <div className="min-h-screen bg-background">
-        {/* Navigation */}
-        <nav className="fixed top-0 w-full z-50 px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <Link href="/dashboard" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center">
-                <Cloud className="h-5 w-5 text-white" />
-              </div>
-              <span className="text-xl font-bold gradient-text">AqwaCloud</span>
-            </Link>
-
-            <div className="flex items-center space-x-4">
-              <Badge variant="secondary">Upgrade Confirmation</Badge>
-              <Button variant="outline" size="sm" onClick={() => setPaymentStep("select")}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Plans
-              </Button>
-            </div>
-          </div>
-        </nav>
-
-        <div className="pt-24 pb-12 px-6">
-          <div className="max-w-2xl mx-auto">
-            <div className="mb-8">
-              <h1 className="text-4xl font-bold mb-2">Confirm Your Upgrade</h1>
-              <p className="text-xl text-muted-foreground">Review your plan selection and complete payment</p>
-            </div>
-
-            <Card className="mb-8">
-              <CardHeader>
-                <CardTitle>Order Summary</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium">{selectedPlanDetails?.name} Plan</div>
-                    <div className="text-sm text-muted-foreground">{selectedPlanDetails?.description}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-bold">${selectedPlanDetails?.price}</div>
-                    <div className="text-sm text-muted-foreground">per {selectedPlanDetails?.period}</div>
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div className="space-y-2">
-                  <h4 className="font-medium">What you'll get:</h4>
-                  <ul className="space-y-1">
-                    {selectedPlanDetails?.features.map((feature, index) => (
-                      <li key={index} className="flex items-center text-sm">
-                        <Check className="h-4 w-4 text-green-600 mr-2 flex-shrink-0" />
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <Separator />
-
-                <div className="flex items-center justify-between font-bold">
-                  <span>Total</span>
-                  <span>
-                    ${selectedPlanDetails?.price}/{selectedPlanDetails?.period}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="mb-8">
-              <CardHeader>
-                <CardTitle>Payment Method</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between p-3 rounded-lg border border-border/50">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-6 bg-gradient-to-r from-blue-500 to-blue-600 rounded flex items-center justify-center">
-                      <span className="text-xs text-white font-bold">VISA</span>
-                    </div>
-                    <div>
-                      <div className="font-medium">•••• 4242</div>
-                      <div className="text-sm text-muted-foreground">Expires 12/26</div>
-                    </div>
-                  </div>
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href="/payment-methods">Change</Link>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <div className="flex space-x-4">
-              <Button variant="outline" className="flex-1 bg-transparent" onClick={() => setPaymentStep("select")}>
-                Back to Plans
-              </Button>
-              <Button className="flex-1 bg-accent hover:bg-accent/90" onClick={handleConfirmUpgrade}>
-                Complete Upgrade
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // Filter out free plan and current plan
+  const availablePlans = SUBSCRIPTION_PLANS.filter(plan => 
+    plan.id !== 'free' && plan.id !== currentPlan?.id
+  )
 
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
       <nav className="fixed top-0 w-full z-50 px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center space-x-2">
+          <Link href="/" className="flex items-center space-x-2">
             <div className="w-8 h-8 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center">
               <Cloud className="h-5 w-5 text-white" />
             </div>
@@ -314,76 +135,121 @@ export default function UpgradePage() {
       </nav>
 
       <div className="pt-24 pb-12 px-6">
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-4xl mx-auto">
           {/* Header */}
-          <div className="mb-12 text-center">
+          <div className="text-center mb-12">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8 }}>
-              <h1 className="text-5xl font-bold mb-4">Choose Your Plan</h1>
-              <p className="text-xl text-muted-foreground">
-                Scale your file transfers with the perfect plan for your needs
+              <h1 className="text-4xl font-bold mb-4">Upgrade Your Plan</h1>
+              <p className="text-xl text-muted-foreground mb-8">
+                Get more transfer capacity and premium features
               </p>
             </motion.div>
           </div>
 
-          {/* Plans */}
-          <div className="grid md:grid-cols-3 gap-8">
-            {plans.map((plan, index) => (
+          {/* Current Usage */}
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }} 
+            animate={{ opacity: 1, y: 0 }} 
+            transition={{ duration: 0.6 }}
+            className="mb-8"
+          >
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Zap className="h-5 w-5 mr-2" />
+                  Current Usage
+                </CardTitle>
+                <CardDescription>
+                  Your {currentPlan?.name || "Free"} plan usage this month
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium">Data Transferred</span>
+                    <span className="text-sm text-muted-foreground">
+                      {formatDataSize(currentUsage.dataTransferred * 1024 * 1024 * 1024)} / {formatDataSize(monthlyLimit * 1024 * 1024 * 1024)}
+                    </span>
+                  </div>
+                  <Progress value={usagePercentage} className="h-2" />
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium">Transfers</span>
+                    <span className="text-sm text-muted-foreground">{currentUsage.transferCount}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Available Plans */}
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+            {availablePlans.map((plan, index) => (
               <motion.div
                 key={plan.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: index * 0.1 }}
-                className={`relative ${plan.popular ? "scale-105" : ""}`}
+                className={`relative ${plan.popular ? 'md:scale-105' : ''} ${selectedPlan === plan.id ? 'ring-2 ring-accent' : ''}`}
               >
                 {plan.popular && (
-                  <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                    <Badge className="bg-accent text-white">Most Popular</Badge>
+                  <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 z-10">
+                    <Badge className="bg-gradient-to-r from-accent to-secondary text-white px-4 py-1">
+                      Most Popular
+                    </Badge>
                   </div>
                 )}
 
-                <Card
-                  className={`h-full ${plan.popular ? "border-accent shadow-lg" : ""} ${plan.current ? "bg-muted/30" : ""}`}
-                >
-                  <CardHeader className="text-center">
-                    <div className="mb-4">
-                      {plan.id === "free" && <Cloud className="h-12 w-12 mx-auto text-muted-foreground" />}
-                      {plan.id === "pro" && <Zap className="h-12 w-12 mx-auto text-accent" />}
-                      {plan.id === "enterprise" && <Shield className="h-12 w-12 mx-auto text-secondary" />}
-                    </div>
+                <Card className={`h-full cursor-pointer transition-all ${selectedPlan === plan.id ? 'border-accent shadow-lg' : 'hover:shadow-md'}`} onClick={() => setSelectedPlan(plan.id)}>
+                  <CardHeader className="text-center pb-4">
                     <CardTitle className="text-2xl">{plan.name}</CardTitle>
-                    <CardDescription>{plan.description}</CardDescription>
+                    <CardDescription className="text-sm">{plan.description}</CardDescription>
                     <div className="mt-4">
-                      <span className="text-4xl font-bold">${plan.price}</span>
-                      <span className="text-muted-foreground">/{plan.period}</span>
+                      <span className="text-4xl font-bold gradient-text">
+                        {formatCurrency(plan.price, plan.currency)}
+                      </span>
+                      <span className="text-muted-foreground">/{plan.interval}</span>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    <ul className="space-y-3">
-                      {plan.features.map((feature, featureIndex) => (
-                        <li key={featureIndex} className="flex items-center">
-                          <Check className="h-4 w-4 text-green-600 mr-3 flex-shrink-0" />
-                          <span className="text-sm">{feature}</span>
+                  
+                  <CardContent className="space-y-6">
+                    {/* Features */}
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm text-muted-foreground">Features</h4>
+                      <ul className="space-y-2">
+                        {plan.features.slice(0, 4).map((feature, featureIndex) => (
+                          <li key={featureIndex} className="flex items-start space-x-2 text-sm">
+                            <Check className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                            <span>{feature}</span>
                         </li>
                       ))}
+                        {plan.features.length > 4 && (
+                          <li className="text-sm text-muted-foreground">
+                            +{plan.features.length - 4} more features
+                          </li>
+                        )}
                     </ul>
+                    </div>
 
+                    {/* Action Button */}
                     <div className="pt-4">
-                      {plan.current ? (
-                        <Button className="w-full" disabled>
-                          Current Plan
-                        </Button>
-                      ) : plan.id === "free" ? (
-                        <Button variant="outline" className="w-full bg-transparent" disabled>
-                          Downgrade Available
-                        </Button>
-                      ) : (
                         <Button
-                          className={`w-full ${plan.popular ? "bg-accent hover:bg-accent/90" : ""}`}
-                          onClick={() => handleSelectPlan(plan.id)}
-                        >
-                          Upgrade to {plan.name}
+                        variant={plan.popular ? "default" : "outline"}
+                        className="w-full"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleUpgrade(plan.id)
+                        }}
+                        disabled={loadingUpgrade === plan.id}
+                      >
+                        {loadingUpgrade === plan.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          `Upgrade to ${plan.name}`
+                        )}
                         </Button>
-                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -391,36 +257,72 @@ export default function UpgradePage() {
             ))}
           </div>
 
-          {/* FAQ */}
-          <div className="mt-16 text-center">
-            <h2 className="text-2xl font-bold mb-8">Frequently Asked Questions</h2>
-            <div className="grid md:grid-cols-2 gap-8 text-left">
-              <div>
-                <h3 className="font-semibold mb-2">Can I change plans anytime?</h3>
+          {/* Benefits Section */}
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }} 
+            animate={{ opacity: 1, y: 0 }} 
+            transition={{ duration: 0.8, delay: 0.4 }}
+            className="mt-16"
+          >
+            <h2 className="text-3xl font-bold text-center mb-8">Why Upgrade?</h2>
+            
+            <div className="grid md:grid-cols-3 gap-8">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Zap className="h-5 w-5 mr-2" />
+                    Priority Processing
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
                 <p className="text-muted-foreground">
-                  Yes, you can upgrade or downgrade your plan at any time. Changes take effect immediately.
-                </p>
-              </div>
-              <div>
-                <h3 className="font-semibold mb-2">What payment methods do you accept?</h3>
+                    Get faster transfer speeds and priority processing for your files. 
+                    Your transfers will be processed before free tier users.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Shield className="h-5 w-5 mr-2" />
+                    Enhanced Security
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
                 <p className="text-muted-foreground">
-                  We accept all major credit cards including Visa, Mastercard, and American Express.
-                </p>
-              </div>
-              <div>
-                <h3 className="font-semibold mb-2">Is there a free trial?</h3>
+                    Advanced encryption and security features to protect your data 
+                    during transfers with enterprise-grade protection.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Users className="h-5 w-5 mr-2" />
+                    Priority Support
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
                 <p className="text-muted-foreground">
-                  Our Free plan gives you 1 GB of transfers per month to try out AqwaCloud at no cost.
-                </p>
-              </div>
-              <div>
-                <h3 className="font-semibold mb-2">Do you offer refunds?</h3>
-                <p className="text-muted-foreground">Yes, we offer a 30-day money-back guarantee for all paid plans.</p>
-              </div>
+                    Get dedicated support with faster response times and 
+                    priority assistance for any issues or questions.
+                  </p>
+                </CardContent>
+              </Card>
             </div>
-          </div>
+          </motion.div>
         </div>
       </div>
     </div>
+  )
+}
+
+export default function UpgradePage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <UpgradeContent />
+    </Suspense>
   )
 }

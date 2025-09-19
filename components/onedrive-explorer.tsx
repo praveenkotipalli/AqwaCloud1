@@ -254,7 +254,7 @@ export function OneDriveExplorer({ connectionId, onFileSelect, selectedFiles: ex
   }
 
   return (
-    <Card className="bg-white/5 border-white/20">
+    <Card className="bg-white/5 border-white/20 min-h-[560px]">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-white">
           {connection.icon ? (
@@ -350,7 +350,7 @@ export function OneDriveExplorer({ connectionId, onFileSelect, selectedFiles: ex
 
         {/* Files List */}
         {!isLoading && !error && (
-          <div className="space-y-1">
+          <div className="space-y-1 max-h-[420px] overflow-y-auto pr-1">
             {files.length === 0 ? (
               <div className="text-center py-8 text-slate-400">
                 <FolderOpen className="h-12 w-12 mx-auto mb-2 opacity-50" />

@@ -12,15 +12,22 @@ import {
   updateProfile
 } from "firebase/auth"
 import { auth } from "@/lib/firebase"
+import { signInAnonymously } from "firebase/auth"
 
 interface User {
   id: string
   email: string
   name: string
-  plan: "free" | "pro" | "enterprise"
+  plan: "free" | "personal" | "pro" | "enterprise"
   usage: {
     transfersThisMonth: number
     storageUsed: number
+  }
+  subscription?: {
+    id: string
+    status: "active" | "canceled" | "past_due" | "unpaid"
+    currentPeriodEnd: Date
+    cancelAtPeriodEnd: boolean
   }
 }
 
@@ -63,6 +70,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => unsubscribe()
   }, [])
+
+  // Ensure a Firebase user exists (anonymous) so Firestore reads/writes work even before explicit login
+  useEffect(() => {
+    if (!loading && !user && typeof window !== 'undefined') {
+      signInAnonymously(auth).catch(() => {})
+    }
+  }, [loading, user])
 
   const loginWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
     try {

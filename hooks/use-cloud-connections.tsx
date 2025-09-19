@@ -1,8 +1,10 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { createGoogleDriveService } from "@/lib/google-drive"
 import { createOneDriveService } from "@/lib/onedrive"
+import { db, auth } from "@/lib/firebase"
+import { collection, addDoc, serverTimestamp, doc, setDoc, increment, getDoc, updateDoc } from 'firebase/firestore'
 import { getRealTimeTransferService } from "@/lib/realtime-transfer-service"
 import { TransferUpdate, FileChangeEvent } from "@/lib/real-time-sync"
 
@@ -56,6 +58,16 @@ export interface TransferJob {
   conflictResolution?: any
 }
 
+export interface TransferHistoryItem {
+  id: string
+  timestamp: number
+  fromService: string
+  toService: string
+  fileNames: string[]
+  totalBytes: number
+  status: "completed" | "failed"
+}
+
 const GOOGLE_OAUTH_CONFIG = {
   clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "511490618915-u9f7sic8g95b09d4k0998ij0jr91l17p.apps.googleusercontent.com",
   scope: "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
@@ -91,9 +103,12 @@ export function useCloudConnections() {
   ])
 
   const [transferJobs, setTransferJobs] = useState<TransferJob[]>([])
+  const [transferHistory, setTransferHistory] = useState<TransferHistoryItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [realTimeTransferService] = useState(() => getRealTimeTransferService())
   const [activeSessions, setActiveSessions] = useState<string[]>([])
+  const [recordedJobs, setRecordedJobs] = useState<Set<string>>(new Set())
+  const recordedJobsRef = useRef<Set<string>>(new Set())
 
   // Listen for real-time updates and update transfer jobs
   useEffect(() => {
@@ -126,6 +141,98 @@ export function useCloudConnections() {
           }
           return job
         }))
+
+        // Track cumulative bytes for this job/session
+        if (typeof update.data.bytes === 'number' && update.data.bytes > 0) {
+          const key = update.data.jobId
+          ;(window as any).__aqwa_bytes = (window as any).__aqwa_bytes || {}
+          ;(window as any).__aqwa_bytes[key] = ((window as any).__aqwa_bytes[key] || 0) + update.data.bytes
+        }
+
+        // Persist history/metrics when real-time jobs complete/fail (once per job)
+        try {
+          const jobId: string = update.data.jobId
+          const status: string | undefined = update.data.status
+          if ((status === 'completed' || status === 'failed') && jobId && !recordedJobsRef.current.has(jobId)) {
+            console.log(`📝 Recording real-time transfer completion for job: ${jobId}`)
+            console.log(`📊 Current recordedJobs:`, Array.from(recordedJobsRef.current))
+            
+            // Add to ref immediately for synchronous checking
+            recordedJobsRef.current.add(jobId)
+            
+            // Update state for UI consistency
+            setRecordedJobs(prev => {
+              const newSet = new Set(prev).add(jobId)
+              console.log(`📊 Updated recordedJobs:`, Array.from(newSet))
+              return newSet
+            })
+
+            const sessionId: string | undefined = typeof update.data.sessionId === 'string' ? update.data.sessionId : undefined
+            const matchedJob = transferJobs.find(j => j.id === jobId || (sessionId && j.sessionId === sessionId))
+
+            const inferService = (s?: string): string => {
+              if (!s) return 'unknown'
+              const v = s.toLowerCase()
+              if (v.includes('google')) return 'google-drive'
+              if (v.includes('one')) return 'onedrive'
+              return s
+            }
+
+            const totalBytes = (typeof update.data.totalBytes === 'number' && update.data.totalBytes >= 0)
+              ? update.data.totalBytes
+              : ((window as any).__aqwa_bytes?.[jobId] || 0)
+            const costDelta = (totalBytes/(1024*1024*1024))*0.01
+            const historyEntry = {
+              id: jobId,
+              timestamp: Date.now(),
+              fromService: matchedJob?.sourceService || inferService(update.data.fromService || update.data.sourceProvider),
+              toService: matchedJob?.destinationService || inferService(update.data.toService || update.data.destinationProvider),
+              fileNames: matchedJob?.sourceFiles?.map(f => f.name) || [],
+              totalBytes,
+              costUsd: Number(costDelta.toFixed(4)),
+              status: status === 'completed' ? 'completed' : 'failed' as const
+            }
+
+            const uid = auth.currentUser?.uid || (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('aqwa_user')||'{}')?.uid || 'anon') : 'server')
+            const write = async () => {
+              try {
+                await setDoc(doc(db, 'users', uid, 'transferHistory', historyEntry.id), {
+                  ...historyEntry,
+                  createdAt: serverTimestamp()
+                })
+                const metricsRef = doc(db, 'users', uid, 'metrics', 'aggregate')
+                const snap = await getDoc(metricsRef)
+                if (!snap.exists()) {
+                  await setDoc(metricsRef, {
+                    totalTransfers: 1,
+                    totalBytes: totalBytes,
+                    totalCost: costDelta,
+                    monthTransfers: 1,
+                    monthBytes: totalBytes,
+                    monthCost: costDelta,
+                    updatedAt: serverTimestamp()
+                  })
+                } else {
+                  console.log(`📈 Real-time handler: Incrementing Firestore metrics for job ${jobId}`)
+                  await updateDoc(metricsRef, {
+                    totalTransfers: increment(1),
+                    totalBytes: increment(totalBytes),
+                    totalCost: increment(costDelta),
+                    monthTransfers: increment(1),
+                    monthBytes: increment(totalBytes),
+                    monthCost: increment(costDelta),
+                    updatedAt: serverTimestamp()
+                  })
+                }
+              } catch (e) {
+                console.warn('Failed to persist real-time job to Firestore:', e)
+              }
+            }
+            write()
+          }
+        } catch (persistErr) {
+          console.warn('Real-time persist error:', persistErr)
+        }
       }
     }
 
@@ -135,7 +242,7 @@ export function useCloudConnections() {
     return () => {
       realTimeTransferService.offUpdate(handleRealTimeUpdate)
     }
-  }, [realTimeTransferService])
+  }, [realTimeTransferService, transferJobs])
 
   // Helper function to clean and validate access tokens
   const cleanAccessToken = (token: string): string => {
@@ -220,6 +327,25 @@ export function useCloudConnections() {
       // Save the default connections
       localStorage.setItem("aqwa_cloud_connections", JSON.stringify(connections))
     }
+  }, [])
+
+  // Load saved transfer history from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("aqwa_transfer_history")
+      if (saved) {
+        const parsed: TransferHistoryItem[] = JSON.parse(saved)
+        if (Array.isArray(parsed)) {
+          setTransferHistory(parsed)
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to load transfer history:", err)
+    }
+  }, [])
+
+  const saveTransferHistory = useCallback((items: TransferHistoryItem[]) => {
+    localStorage.setItem("aqwa_transfer_history", JSON.stringify(items.slice(0, 50)))
   }, [])
 
   // Save connections to localStorage
@@ -789,6 +915,7 @@ export function useCloudConnections() {
       const totalFiles = sourceFiles.length
       let transferredFiles = 0
 
+      let accumulatedBytes = 0
       for (const file of sourceFiles) {
         try {
           console.log(`🔄 Starting transfer for: ${file.name}`)
@@ -822,6 +949,7 @@ export function useCloudConnections() {
           fileData = await Promise.race([downloadPromise, timeoutPromise]) as ArrayBuffer
           
           console.log(`✅ Downloaded ${file.name}: ${fileData.byteLength} bytes`)
+          accumulatedBytes += fileData.byteLength
           
           // Update progress - Download complete, starting upload (50%)
           const uploadProgress = Math.round((transferredFiles / totalFiles) * 100 + 50)
@@ -847,7 +975,68 @@ export function useCloudConnections() {
             setTimeout(() => reject(new Error('Upload timeout after 60 seconds')), 60000)
           )
           
-          await Promise.race([uploadPromise, uploadTimeoutPromise])
+          try {
+            await Promise.race([uploadPromise, uploadTimeoutPromise])
+          } catch (uploadErr) {
+            const errMsg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr)
+            const is401 = /401|Unauthorized/i.test(errMsg)
+            const canRefresh = destConnection.provider === "microsoft" && !!destConnection.refreshToken
+            
+            if (is401 && canRefresh) {
+              console.warn(`🔄 Upload received 401. Attempting OneDrive token refresh and retry...`)
+              try {
+                const refreshResp = await fetch("/api/auth/onedrive/token", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ refresh_token: destConnection.refreshToken })
+                })
+                if (!refreshResp.ok) {
+                  const txt = await refreshResp.text()
+                  console.error(`❌ Retry token refresh failed:`, txt)
+                  throw new Error("Failed to refresh OneDrive token for retry")
+                }
+                const refreshed = await refreshResp.json()
+                const newAccessToken = refreshed.access_token
+                const newRefreshToken = refreshed.refresh_token || destConnection.refreshToken
+                const newExpiresAt = Date.now() + (refreshed.expires_in * 1000)
+
+                if (!newAccessToken) throw new Error("Refresh response missing access_token")
+
+                // Update connection state
+                setConnections(prev => {
+                  const updated = prev.map(c => c.id === destConnection.id ? {
+                    ...c,
+                    accessToken: newAccessToken,
+                    refreshToken: newRefreshToken,
+                    expiresAt: newExpiresAt,
+                    status: "connected" as const,
+                    error: undefined
+                  } : c)
+                  saveConnections(updated)
+                  return updated
+                })
+                // Update local refs
+                destConnection.accessToken = newAccessToken
+                destConnection.refreshToken = newRefreshToken
+                destConnection.expiresAt = newExpiresAt
+
+                // Recreate destination service with fresh token
+                const { createOneDriveService: recreateOneDrive } = await import("@/lib/onedrive")
+                destServiceInstance = recreateOneDrive(destConnection)
+                if (!destServiceInstance) throw new Error("Failed to recreate OneDrive service")
+
+                // Retry upload once
+                const retryUpload = destServiceInstance.uploadFile(fileData, file.name, destinationPath)
+                await Promise.race([retryUpload, uploadTimeoutPromise])
+                console.log(`✅ Retry upload succeeded for ${file.name}`)
+              } catch (retryErr) {
+                console.error(`❌ Retry after 401 failed:`, retryErr)
+                throw retryErr
+              }
+            } else {
+              throw uploadErr
+            }
+          }
           
           console.log(`✅ Uploaded ${file.name} successfully`)
           
@@ -880,6 +1069,83 @@ export function useCloudConnections() {
         )
       )
 
+      // Persist history entry (local and Firestore)
+      const costUsd = Number(((accumulatedBytes/(1024*1024*1024))*0.01).toFixed(4))
+      const historyEntry: TransferHistoryItem = {
+        id: jobId,
+        timestamp: Date.now(),
+        fromService: sourceService,
+        toService: destinationService,
+        fileNames: sourceFiles.map(f => f.name),
+        totalBytes: accumulatedBytes,
+        // @ts-ignore - extend stored shape with cost
+        costUsd,
+        status: "completed"
+      }
+      setTransferHistory(prev => {
+        const next = [historyEntry, ...prev].slice(0, 50)
+        saveTransferHistory(next)
+        return next
+      })
+      try {
+        // Check if this job was already recorded by real-time handler
+        console.log(`🔍 Regular handler checking job ${jobId} against recordedJobs:`, Array.from(recordedJobsRef.current))
+        if (jobId && recordedJobsRef.current.has(jobId)) {
+          console.log(`⚠️ Job ${jobId} already recorded by real-time handler, skipping duplicate`)
+          return jobId
+        }
+        
+        // TEMPORARY FIX: Skip Firestore recording for regular transfers to prevent duplicates
+        // Real-time transfers handle all the Firestore recording
+        console.log(`⚠️ SKIPPING Firestore recording for regular transfer ${jobId} to prevent duplicates`)
+        return jobId
+        
+        console.log(`📝 Recording regular transfer completion for job: ${jobId}`)
+        console.log(`📊 Current recordedJobs before check:`, Array.from(recordedJobsRef.current))
+        
+        // Add to ref immediately for synchronous checking
+        if (jobId) {
+          recordedJobsRef.current.add(jobId)
+          setRecordedJobs(prev => {
+            const newSet = new Set(prev).add(jobId)
+            console.log(`📊 Updated recordedJobs:`, Array.from(newSet))
+            return newSet
+          })
+        }
+        
+        const userId = auth.currentUser?.uid || (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('aqwa_user')||'{}')?.uid || 'anon') : 'server')
+        await setDoc(doc(db, 'users', userId, 'transferHistory', historyEntry.id), {
+          ...historyEntry,
+          createdAt: serverTimestamp()
+        })
+        const metricsRef = doc(db, 'users', userId, 'metrics', 'aggregate')
+        const metricsSnap = await getDoc(metricsRef)
+        if (!metricsSnap.exists()) {
+          await setDoc(metricsRef, {
+            totalTransfers: 1,
+            totalBytes: accumulatedBytes,
+            totalCost: costUsd,
+            monthBytes: accumulatedBytes,
+            monthTransfers: 1,
+            monthCost: costUsd,
+            updatedAt: serverTimestamp()
+          })
+        } else {
+          console.log(`📈 Regular handler: Incrementing Firestore metrics for job ${jobId}`)
+          await updateDoc(metricsRef, {
+            totalTransfers: increment(1),
+            totalBytes: increment(accumulatedBytes),
+            totalCost: increment(costUsd),
+            monthTransfers: increment(1),
+            monthBytes: increment(accumulatedBytes),
+            monthCost: increment(costUsd),
+            updatedAt: serverTimestamp()
+          })
+        }
+      } catch (fireErr) {
+        console.warn('Failed to write metrics/history to Firestore:', fireErr)
+      }
+
       console.log(`🎉 Transfer job ${jobId} completed successfully`)
     } catch (error) {
       console.error(`❌ Transfer job ${jobId} failed:`, error)
@@ -892,6 +1158,64 @@ export function useCloudConnections() {
             : job
         )
       )
+
+      // Persist failed history entry (bytes may be partial)
+      const failedEntry: TransferHistoryItem = {
+        id: jobId,
+        timestamp: Date.now(),
+        fromService: sourceService,
+        toService: destinationService,
+        fileNames: sourceFiles.map(f => f.name),
+        totalBytes: 0,
+        // @ts-ignore
+        costUsd: 0,
+        status: "failed"
+      }
+      setTransferHistory(prev => {
+        const next = [failedEntry, ...prev].slice(0, 50)
+        saveTransferHistory(next)
+        return next
+      })
+      try {
+        // Check if this job was already recorded by real-time handler
+        if (jobId && recordedJobsRef.current.has(jobId)) {
+          console.log(`⚠️ Failed job ${jobId} already recorded by real-time handler, skipping duplicate`)
+          return jobId
+        }
+        
+        console.log(`📝 Recording failed transfer for job: ${jobId}`)
+        if (jobId) {
+          recordedJobsRef.current.add(jobId)
+          setRecordedJobs(prev => new Set(prev).add(jobId))
+        }
+        
+        const userId = auth.currentUser?.uid || (typeof window !== 'undefined' ? (JSON.parse(localStorage.getItem('aqwa_user')||'{}')?.uid || 'anon') : 'server')
+        await setDoc(doc(db, 'users', userId, 'transferHistory', failedEntry.id), {
+          ...failedEntry,
+          createdAt: serverTimestamp()
+        })
+        const metricsRef = doc(db, 'users', userId, 'metrics', 'aggregate')
+        const metricsSnap = await getDoc(metricsRef)
+        if (!metricsSnap.exists()) {
+          await setDoc(metricsRef, {
+            totalTransfers: 1,
+            totalBytes: 0,
+            totalCost: 0,
+            monthBytes: 0,
+            monthTransfers: 1,
+            monthCost: 0,
+            updatedAt: serverTimestamp()
+          })
+        } else {
+          await updateDoc(metricsRef, {
+            totalTransfers: increment(1),
+            monthTransfers: increment(1),
+            updatedAt: serverTimestamp()
+          })
+        }
+      } catch (fireErr) {
+        console.warn('Failed to write failed entry to Firestore:', fireErr)
+      }
     }
 
     return jobId
@@ -1002,6 +1326,7 @@ export function useCloudConnections() {
   return {
     connections,
     transferJobs,
+    transferHistory,
     isLoading,
     activeSessions,
     connectGoogleDrive,

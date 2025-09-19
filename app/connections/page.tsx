@@ -24,6 +24,7 @@ import {
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { useAuth } from "@/hooks/use-auth"
+import { useCloudConnections } from "@/hooks/use-cloud-connections"
 
 interface CloudConnection {
   id: string
@@ -59,89 +60,19 @@ interface ConnectionLog {
 export default function ConnectionsPage() {
   const { isAuthenticated, user, loading } = useAuth()
   const router = useRouter()
+  const { 
+    connections, 
+    connectGoogleDrive, 
+    connectOneDrive, 
+    disconnectService,
+    resetConnections 
+  } = useCloudConnections()
+  
   const [activeTab, setActiveTab] = useState("connections")
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [editingConnection, setEditingConnection] = useState<CloudConnection | null>(null)
   const [successMessage, setSuccessMessage] = useState("")
-
-  const [connections, setConnections] = useState<CloudConnection[]>([
-    {
-      id: "gdrive",
-      name: "Google Drive",
-      provider: "Google",
-      icon: "https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png",
-      connected: true,
-      status: "healthy",
-      lastSync: new Date(Date.now() - 2 * 60 * 60 * 1000),
-      syncFrequency: "hourly",
-      permissions: ["read", "write", "delete"],
-      storageUsed: "12.4 GB",
-      totalStorage: "15 GB",
-      accountEmail: "user@gmail.com",
-      settings: {
-        autoSync: true,
-        notifications: true,
-        bandwidth: "unlimited",
-        encryption: true,
-      },
-    },
-    {
-      id: "onedrive",
-      name: "OneDrive",
-      provider: "Microsoft",
-      icon: "https://upload.wikimedia.org/wikipedia/commons/3/3c/Microsoft_Office_OneDrive_%282019%E2%80%93present%29.svg",
-      connected: true,
-      status: "warning",
-      lastSync: new Date(Date.now() - 24 * 60 * 60 * 1000),
-      syncFrequency: "daily",
-      permissions: ["read", "write"],
-      storageUsed: "8.2 GB",
-      totalStorage: "5 GB",
-      accountEmail: "user@outlook.com",
-      settings: {
-        autoSync: false,
-        notifications: true,
-        bandwidth: "limited",
-        encryption: true,
-      },
-    },
-    {
-      id: "dropbox",
-      name: "Dropbox",
-      provider: "Dropbox",
-      icon: "https://cfl.dropboxstatic.com/static/images/logo_catalog/dropbox_logo_glyph_blue_m1.svg",
-      connected: false,
-      status: "error",
-      lastSync: null,
-      syncFrequency: "manual",
-      permissions: [],
-      settings: {
-        autoSync: false,
-        notifications: false,
-        bandwidth: "unlimited",
-        encryption: false,
-      },
-    },
-    {
-      id: "aws",
-      name: "AWS S3",
-      provider: "Amazon",
-      icon: "https://upload.wikimedia.org/wikipedia/commons/b/bc/Amazon-S3-Logo.svg",
-      connected: true,
-      status: "healthy",
-      lastSync: new Date(Date.now() - 30 * 60 * 1000),
-      syncFrequency: "realtime",
-      permissions: ["read", "write", "delete", "admin"],
-      storageUsed: "45.8 GB",
-      totalStorage: "Unlimited",
-      settings: {
-        autoSync: true,
-        notifications: true,
-        bandwidth: "unlimited",
-        encryption: true,
-      },
-    },
-  ])
+  const [isConnecting, setIsConnecting] = useState<string | null>(null)
 
   const [connectionLogs, setConnectionLogs] = useState<ConnectionLog[]>([
     {
@@ -176,77 +107,73 @@ export default function ConnectionsPage() {
     }
   }, [isAuthenticated, loading, router])
 
-  const handleConnect = (connectionId: string) => {
-    setConnections(
-      connections.map((conn) =>
-        conn.id === connectionId ? { ...conn, connected: true, status: "healthy", lastSync: new Date() } : conn,
-      ),
-    )
-    setSuccessMessage("Connection established successfully!")
-    setTimeout(() => setSuccessMessage(""), 3000)
+  const handleConnect = async (connectionId: string) => {
+    setIsConnecting(connectionId)
+    
+    try {
+      if (connectionId === "google-drive") {
+        await connectGoogleDrive()
+        setSuccessMessage("Google Drive connected successfully!")
+      } else if (connectionId === "onedrive") {
+        await connectOneDrive()
+        setSuccessMessage("OneDrive connected successfully!")
+      } else {
+        setSuccessMessage("Service not supported yet!")
+      }
+    } catch (error) {
+      console.error(`Failed to connect to ${connectionId}:`, error)
+      setSuccessMessage(`Failed to connect to ${connectionId}. Please try again.`)
+    } finally {
+      setIsConnecting(null)
+      setTimeout(() => setSuccessMessage(""), 3000)
+    }
   }
 
   const handleDisconnect = (connectionId: string) => {
-    setConnections(
-      connections.map((conn) =>
-        conn.id === connectionId ? { ...conn, connected: false, status: "error", lastSync: null } : conn,
-      ),
-    )
+    disconnectService(connectionId)
     setSuccessMessage("Connection disconnected successfully!")
     setTimeout(() => setSuccessMessage(""), 3000)
   }
 
-  const handleSync = (connectionId: string) => {
-    setConnections(
-      connections.map((conn) =>
-        conn.id === connectionId ? { ...conn, status: "syncing", lastSync: new Date() } : conn,
-      ),
-    )
-
-    setTimeout(() => {
-      setConnections(connections.map((conn) => (conn.id === connectionId ? { ...conn, status: "healthy" } : conn)))
-      setSuccessMessage("Sync completed successfully!")
-      setTimeout(() => setSuccessMessage(""), 3000)
-    }, 2000)
-  }
-
   const handleUpdateSettings = (connectionId: string, settings: any) => {
-    setConnections(
-      connections.map((conn) =>
-        conn.id === connectionId ? { ...conn, settings: { ...conn.settings, ...settings } } : conn,
-      ),
-    )
+    // In a real implementation, you would update the connection settings here
     setSuccessMessage("Settings updated successfully!")
     setTimeout(() => setSuccessMessage(""), 3000)
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "healthy":
-        return "bg-green-100 text-green-800"
-      case "warning":
-        return "bg-yellow-100 text-yellow-800"
-      case "error":
-        return "bg-red-100 text-red-800"
-      case "syncing":
-        return "bg-blue-100 text-blue-800"
-      default:
-        return "bg-gray-100 text-gray-800"
+  const getStatusColor = (connection: any) => {
+    if (connection.connected) {
+      return "bg-green-100 text-green-800"
+    } else if (connection.status === "connecting") {
+      return "bg-blue-100 text-blue-800"
+    } else if (connection.status === "error") {
+      return "bg-red-100 text-red-800"
+    } else {
+      return "bg-gray-100 text-gray-800"
     }
   }
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "healthy":
-        return <CheckCircle className="h-4 w-4" />
-      case "warning":
-        return <AlertCircle className="h-4 w-4" />
-      case "error":
-        return <AlertCircle className="h-4 w-4" />
-      case "syncing":
-        return <RefreshCw className="h-4 w-4 animate-spin" />
-      default:
-        return <Cloud className="h-4 w-4" />
+  const getStatusIcon = (connection: any) => {
+    if (connection.connected) {
+      return <CheckCircle className="h-4 w-4" />
+    } else if (connection.status === "connecting") {
+      return <RefreshCw className="h-4 w-4 animate-spin" />
+    } else if (connection.status === "error") {
+      return <AlertCircle className="h-4 w-4" />
+    } else {
+      return <Cloud className="h-4 w-4" />
+    }
+  }
+
+  const getStatusText = (connection: any) => {
+    if (connection.connected) {
+      return "Connected"
+    } else if (connection.status === "connecting") {
+      return "Connecting"
+    } else if (connection.status === "error") {
+      return "Error"
+    } else {
+      return "Disconnected"
     }
   }
 
@@ -374,14 +301,14 @@ export default function ConnectionsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center space-x-3 mb-2">
                             <h3 className="text-lg font-semibold truncate">{connection.name}</h3>
-                            <Badge className={getStatusColor(connection.status)}>
-                              {getStatusIcon(connection.status)}
-                              <span className="ml-1 capitalize">{connection.status}</span>
+                            <Badge className={getStatusColor(connection)}>
+                              {getStatusIcon(connection)}
+                              <span className="ml-1">{getStatusText(connection)}</span>
                             </Badge>
                           </div>
 
                           <div className="flex items-center space-x-4 text-sm text-muted-foreground mb-3">
-                            <span>{connection.provider}</span>
+                            <span className="capitalize">{connection.provider}</span>
                             {connection.accountEmail && (
                               <>
                                 <span>•</span>
@@ -390,24 +317,24 @@ export default function ConnectionsPage() {
                             )}
                           </div>
 
-                          {connection.connected && (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                              <div>
-                                <span className="font-medium text-foreground">Last Sync: </span>
-                                <span className="text-muted-foreground">
-                                  {connection.lastSync ? connection.lastSync.toLocaleString() : "Never"}
-                                </span>
-                              </div>
+                          {connection.connected && connection.storageInfo && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                               <div>
                                 <span className="font-medium text-foreground">Storage: </span>
                                 <span className="text-muted-foreground">
-                                  {connection.storageUsed} / {connection.totalStorage}
+                                  {connection.storageInfo.used} / {connection.storageInfo.total}
                                 </span>
                               </div>
                               <div>
-                                <span className="font-medium text-foreground">Frequency: </span>
-                                <span className="text-muted-foreground capitalize">{connection.syncFrequency}</span>
+                                <span className="font-medium text-foreground">Available: </span>
+                                <span className="text-muted-foreground">{connection.storageInfo.available}</span>
                               </div>
+                            </div>
+                          )}
+
+                          {connection.error && (
+                            <div className="text-sm text-red-600 bg-red-50 p-2 rounded">
+                              {connection.error}
                             </div>
                           )}
                         </div>
@@ -417,22 +344,41 @@ export default function ConnectionsPage() {
                           <div className="flex items-center space-x-2">
                             {connection.connected ? (
                               <>
-                                <Button variant="outline" size="sm" onClick={() => handleSync(connection.id)}>
-                                  <RefreshCw className="h-4 w-4 mr-1" />
-                                  Sync
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => setEditingConnection(connection)}>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  onClick={() => setEditingConnection(connection)}
+                                  className="border-blue-200 text-blue-600 hover:bg-blue-50"
+                                >
                                   <Settings className="h-4 w-4 mr-1" />
                                   Settings
                                 </Button>
-                                <Button variant="outline" size="sm" onClick={() => handleDisconnect(connection.id)}>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  onClick={() => handleDisconnect(connection.id)}
+                                  className="border-red-200 text-red-600 hover:bg-red-50"
+                                >
                                   Disconnect
                                 </Button>
                               </>
                             ) : (
-                              <Button onClick={() => handleConnect(connection.id)}>
-                                <ExternalLink className="h-4 w-4 mr-1" />
-                                Connect
+                              <Button 
+                                onClick={() => handleConnect(connection.id)}
+                                disabled={isConnecting === connection.id}
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
+                              >
+                                {isConnecting === connection.id ? (
+                                  <>
+                                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                                    Connecting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <ExternalLink className="h-4 w-4 mr-1" />
+                                    Connect
+                                  </>
+                                )}
                               </Button>
                             )}
                           </div>
@@ -499,57 +445,43 @@ export default function ConnectionsPage() {
                 </DialogHeader>
 
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Auto Sync</Label>
-                      <p className="text-sm text-muted-foreground">Automatically sync files</p>
-                    </div>
-                    <Switch
-                      checked={editingConnection.settings.autoSync}
-                      onCheckedChange={(checked) => handleUpdateSettings(editingConnection.id, { autoSync: checked })}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Notifications</Label>
-                      <p className="text-sm text-muted-foreground">Get sync notifications</p>
-                    </div>
-                    <Switch
-                      checked={editingConnection.settings.notifications}
-                      onCheckedChange={(checked) =>
-                        handleUpdateSettings(editingConnection.id, { notifications: checked })
-                      }
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Encryption</Label>
-                      <p className="text-sm text-muted-foreground">Encrypt data in transit</p>
-                    </div>
-                    <Switch
-                      checked={editingConnection.settings.encryption}
-                      onCheckedChange={(checked) => handleUpdateSettings(editingConnection.id, { encryption: checked })}
-                    />
+                  <div className="text-sm text-muted-foreground">
+                    <p><strong>Provider:</strong> {editingConnection.provider}</p>
+                    <p><strong>Status:</strong> {editingConnection.connected ? 'Connected' : 'Disconnected'}</p>
+                    {editingConnection.accountEmail && (
+                      <p><strong>Account:</strong> {editingConnection.accountEmail}</p>
+                    )}
+                    {editingConnection.storageInfo && (
+                      <p><strong>Storage:</strong> {editingConnection.storageInfo.used} / {editingConnection.storageInfo.total}</p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Bandwidth Limit</Label>
-                    <Select
-                      value={editingConnection.settings.bandwidth}
-                      onValueChange={(value: "unlimited" | "limited") =>
-                        handleUpdateSettings(editingConnection.id, { bandwidth: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="unlimited">Unlimited</SelectItem>
-                        <SelectItem value="limited">Limited</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label>Connection Actions</Label>
+                    <div className="flex gap-2">
+                      {editingConnection.connected ? (
+                        <Button 
+                          variant="outline" 
+                          onClick={() => {
+                            handleDisconnect(editingConnection.id)
+                            setEditingConnection(null)
+                          }}
+                          className="border-red-200 text-red-600 hover:bg-red-50"
+                        >
+                          Disconnect
+                        </Button>
+                      ) : (
+                        <Button 
+                          onClick={() => {
+                            handleConnect(editingConnection.id)
+                            setEditingConnection(null)
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          Connect
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex justify-end">
