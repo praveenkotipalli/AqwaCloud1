@@ -34,6 +34,12 @@ export async function POST(request: NextRequest) {
       metadata: {
         purpose: 'wallet_topup',
         userId
+      },
+      payment_intent_data: {
+        metadata: {
+          purpose: 'wallet_topup',
+          userId
+        }
       }
     })
 

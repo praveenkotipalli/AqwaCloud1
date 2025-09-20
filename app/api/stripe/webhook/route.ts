@@ -37,6 +37,10 @@ export async function POST(request: NextRequest) {
         await handleCheckoutSessionCompleted(event.data.object)
         break
 
+      case 'payment_intent.succeeded':
+        await handlePaymentIntentSucceeded(event.data.object)
+        break
+
       case 'customer.subscription.created':
         await handleSubscriptionCreated(event.data.object)
         break
@@ -107,6 +111,43 @@ async function handleCheckoutSessionCompleted(session: any) {
     // Subscription flow handled by other events
   } catch (error) {
     console.error('Error handling checkout session completed:', error)
+    throw error // Re-throw to ensure webhook fails
+  }
+}
+
+async function handlePaymentIntentSucceeded(paymentIntent: any) {
+  try {
+    console.log('Payment intent succeeded:', paymentIntent.id)
+    console.log('Payment intent metadata:', paymentIntent.metadata)
+    console.log('Amount:', paymentIntent.amount)
+    console.log('Status:', paymentIntent.status)
+
+    // Check if this is a wallet top-up payment
+    if (paymentIntent.metadata?.purpose === 'wallet_topup' && paymentIntent.status === 'succeeded') {
+      const userId = paymentIntent.metadata.userId
+      const amountCents = paymentIntent.amount
+      
+      console.log(`Processing wallet top-up from payment intent: userId=${userId}, amount=${amountCents} cents`)
+      
+      if (userId && typeof amountCents === 'number' && amountCents > 0) {
+        try {
+          await creditWallet(userId, amountCents, 'Stripe payment intent top-up')
+          console.log(`✅ Wallet credited successfully for user ${userId}: ${amountCents} cents`)
+        } catch (e) {
+          console.error('❌ Failed to credit wallet:', e)
+          throw e // Re-throw to ensure webhook fails if wallet credit fails
+        }
+      } else {
+        console.error('❌ Invalid wallet top-up data:', { userId, amountCents })
+      }
+    } else {
+      console.log('Not a wallet top-up or payment not succeeded:', {
+        purpose: paymentIntent.metadata?.purpose,
+        status: paymentIntent.status
+      })
+    }
+  } catch (error) {
+    console.error('Error handling payment intent succeeded:', error)
     throw error // Re-throw to ensure webhook fails
   }
 }

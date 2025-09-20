@@ -1,0 +1,29 @@
+# Copy this content to .env.local file
+
+# Stripe Configuration
+STRIPE_SECRET_KEY=sk_test_51RVm8JP5qvB67uFKd0IdNGuamND9KL9WHGZSfXlic36C51WyN2SBMgGPNWIxROYoLzi8Z66pyfc5Ac8tB
+WdlWT2800VNJGJvjR
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51RVm8JP5qvB67uFKhIspmi9Tepa2wU2NdmAZ4oJKsBPfenwKSrODRJLS1xyvclM2
+v13uWFgMBrSMZGoIjbjuadi500luz1aUJd
+STRIPE_WEBHOOK_SECRET=whsec_3YsyrWWVJ7lYJNhOhTqQF5O6rO9nr6M9
+
+# Firebase Configuration
+NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyBsZMSZBFC_lKRNkMWm52kdC9KUUAvCbNs
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=aust2-b8d21.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_DATABASE_URL=https://aust2-b8d21-default-rtdb.firebaseio.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=aust2-b8d21
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=aust2-b8d21.firebasestorage.app
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=91866779140
+NEXT_PUBLIC_FIREBASE_APP_ID=1:91866779140:web:f23a3ccfd106287682af51
+NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-EBSNTKHEB8
+
+# Firebase Admin (Server-side) - You need to get these from Firebase Console
+FIREBASE_ADMIN_PROJECT_ID=aust2-b8d21
+FIREBASE_ADMIN_CLIENT_EMAIL=firebase-adminsdk-xxxxx@aust2-b8d21.iam.gserviceaccount.com
+FIREBASE_ADMIN_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----\n"
+
+# App Configuration
+NEXT_PUBLIC_APP_URL=https://aqwa-cloud1-7iaj.vercel.app
+
+# Optional: Stripe Portal Configuration (if you have a specific one)
+# STRIPE_PORTAL_CONFIGURATION_ID=bpc_xxxxx
