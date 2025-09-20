@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import { createUserSubscription, updateUserSubscription, cancelUserSubscription } from '@/lib/firebase-subscriptions'
-import { creditWallet } from '@/lib/wallet'
+import { creditWalletAdmin } from '@/lib/wallet-admin'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2023-10-16',
@@ -92,7 +92,7 @@ async function handleCheckoutSessionCompleted(session: any) {
       
       if (userId && typeof amountCents === 'number' && amountCents > 0) {
         try {
-          await creditWallet(userId, amountCents, 'Stripe top-up')
+          await creditWalletAdmin(userId, amountCents, 'Stripe top-up')
           console.log(`✅ Wallet credited successfully for user ${userId}: ${amountCents} cents`)
         } catch (e) {
           console.error('❌ Failed to credit wallet:', e)
@@ -131,7 +131,7 @@ async function handlePaymentIntentSucceeded(paymentIntent: any) {
       
       if (userId && typeof amountCents === 'number' && amountCents > 0) {
         try {
-          await creditWallet(userId, amountCents, 'Stripe payment intent top-up')
+          await creditWalletAdmin(userId, amountCents, 'Stripe payment intent top-up')
           console.log(`✅ Wallet credited successfully for user ${userId}: ${amountCents} cents`)
         } catch (e) {
           console.error('❌ Failed to credit wallet:', e)
