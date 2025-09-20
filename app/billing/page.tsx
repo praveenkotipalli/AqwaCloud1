@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import { auth } from "@/lib/firebase"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -24,7 +25,6 @@ import { useSubscription } from "@/hooks/use-subscription"
 import { useWallet } from "@/hooks/use-wallet"
 import { formatCurrency, formatDataSize } from "@/lib/subscription"
 import { getStripe } from "@/lib/stripe"
-import { auth } from "@/lib/firebase"
 
 export default function BillingPage() {
   const { isAuthenticated, user, loading } = useAuth()
@@ -58,15 +58,28 @@ export default function BillingPage() {
   }
 
   const handleManageBilling = async () => {
-    if (!user) return
+    if (!user) {
+      console.error('No user found')
+      alert('Please log in to manage billing')
+      return
+    }
 
+    console.log('Opening billing portal for user:', user.id)
+    setLoadingPortal(true)
+    
     try {
-      setLoadingPortal(true)
-      
       // Get Firebase auth token
-      const token = await auth.currentUser?.getIdToken()
-      
-      // Create billing portal session
+      const firebaseUser = auth.currentUser
+      if (!firebaseUser) {
+        throw new Error('No Firebase user found')
+      }
+
+      const token = await firebaseUser.getIdToken()
+      if (!token) {
+        throw new Error('Failed to get auth token')
+      }
+
+      console.log('Making API call to create portal session...')
       const response = await fetch('/api/stripe/create-portal-session', {
         method: 'POST',
         headers: {
@@ -75,22 +88,33 @@ export default function BillingPage() {
         }
       })
 
+      console.log('Portal session response status:', response.status)
+
       if (!response.ok) {
         let reason = 'Failed to create billing portal session'
         try {
           const data = await response.json()
+          console.error('Portal session error data:', data)
           if (data?.error) reason = data.error
-        } catch {}
+        } catch (e) {
+          console.error('Failed to parse error response:', e)
+        }
         throw new Error(reason)
       }
 
       const { url } = await response.json()
+      console.log('Portal URL received:', url)
       
-      // Redirect to Stripe billing portal
-      window.location.href = url
+      if (url) {
+        // Redirect to Stripe billing portal
+        window.location.href = url
+      } else {
+        throw new Error('No portal URL received')
+      }
     } catch (error) {
       console.error('Error opening billing portal:', error)
-      // Handle error (show toast, etc.)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      alert(`Error opening billing portal: ${errorMessage}`)
     } finally {
       setLoadingPortal(false)
     }
