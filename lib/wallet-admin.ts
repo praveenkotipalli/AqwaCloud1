@@ -1,4 +1,4 @@
-import { adminDb } from '@/lib/firebase-admin'
+import { getAdminDb } from '@/lib/firebase-admin'
 import { FieldValue } from 'firebase-admin/firestore'
 
 export interface Wallet {
@@ -21,6 +21,7 @@ const WALLETS = 'wallets'
 const TXNS = 'walletTransactions'
 
 export async function getWalletAdmin(userId: string): Promise<Wallet> {
+  const adminDb = getAdminDb()
   const walletRef = adminDb.collection(WALLETS).doc(userId)
   const walletDoc = await walletRef.get()
   
@@ -50,13 +51,14 @@ export async function creditWalletAdmin(userId: string, amountCents: number, des
   const newBalance = wallet.balanceCents + amountCents
   
   // Update wallet balance
+  const adminDb = getAdminDb()
   await adminDb.collection(WALLETS).doc(userId).update({
     balanceCents: newBalance,
     updatedAt: FieldValue.serverTimestamp()
   })
   
   // Add transaction record
-  await adminDb.collection(TXNS).add({
+  await getAdminDb().collection(TXNS).add({
     userId,
     type: 'credit',
     amountCents,
@@ -75,6 +77,7 @@ export async function debitWalletAdmin(userId: string, amountCents: number, desc
   const newBalance = wallet.balanceCents - amountCents
   
   // Update wallet balance
+  const adminDb = getAdminDb()
   await adminDb.collection(WALLETS).doc(userId).update({
     balanceCents: newBalance,
     updatedAt: FieldValue.serverTimestamp()
