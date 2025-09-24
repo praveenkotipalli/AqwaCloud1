@@ -68,10 +68,29 @@ export interface TransferHistoryItem {
   status: "completed" | "failed"
 }
 
+// Prefer explicit env to avoid Vercel preview domains in redirect_uri
+const GOOGLE_REDIRECT_BASE =
+  (typeof process !== 'undefined' && (process as any).env?.NEXT_PUBLIC_GOOGLE_REDIRECT_URI?.replace(/\/$/, "")) ||
+  (typeof process !== 'undefined' && (process as any).env?.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "")) ||
+  ""
+
+const GOOGLE_CALLBACK = "/auth/google/callback"
+
 const GOOGLE_OAUTH_CONFIG = {
   clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "511490618915-u9f7sic8g95b09d4k0998ij0jr91l17p.apps.googleusercontent.com",
   scope: "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
-  redirectUri: typeof window !== "undefined" ? `${window.location.origin}/auth/google/callback` : "",
+  redirectUri: (() => {
+    // If env provides full callback, use it; else append callback to base; else fallback to window origin
+    if (GOOGLE_REDIRECT_BASE) {
+      return GOOGLE_REDIRECT_BASE.includes(GOOGLE_CALLBACK)
+        ? GOOGLE_REDIRECT_BASE
+        : `${GOOGLE_REDIRECT_BASE}${GOOGLE_CALLBACK}`
+    }
+    if (typeof window !== "undefined") {
+      return `${window.location.origin}${GOOGLE_CALLBACK}`
+    }
+    return ""
+  })(),
 }
 
 const ONEDRIVE_OAUTH_CONFIG = {
@@ -367,6 +386,21 @@ export function useCloudConnections() {
     )
 
     try {
+      // Ensure we initiate OAuth from the canonical base URL to avoid preview domains
+      if (typeof window !== "undefined" && GOOGLE_OAUTH_CONFIG.redirectUri) {
+        try {
+          const redirectUrl = new URL(GOOGLE_OAUTH_CONFIG.redirectUri)
+          const redirectOrigin = `${redirectUrl.protocol}//${redirectUrl.host}`
+          const currentOrigin = window.location.origin
+          if (redirectOrigin && redirectOrigin !== currentOrigin) {
+            // Navigate to canonical origin, preserving current path so user context remains
+            const target = `${redirectOrigin}${window.location.pathname}${window.location.search}`
+            window.location.replace(target)
+            return
+          }
+        } catch {}
+      }
+
       // Generate OAuth URL
       const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth")
       authUrl.searchParams.append("client_id", GOOGLE_OAUTH_CONFIG.clientId)

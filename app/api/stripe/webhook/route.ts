@@ -8,7 +8,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-10-16',
+  apiVersion: '2025-08-27.basil',
 })
 
 export async function POST(request: NextRequest) {
@@ -125,31 +125,8 @@ async function handlePaymentIntentSucceeded(paymentIntent: any) {
     console.log('Payment intent metadata:', paymentIntent.metadata)
     console.log('Amount:', paymentIntent.amount)
     console.log('Status:', paymentIntent.status)
-
-    // Check if this is a wallet top-up payment
-    if (paymentIntent.metadata?.purpose === 'wallet_topup' && paymentIntent.status === 'succeeded') {
-      const userId = paymentIntent.metadata.userId
-      const amountCents = paymentIntent.amount
-      
-      console.log(`Processing wallet top-up from payment intent: userId=${userId}, amount=${amountCents} cents`)
-      
-      if (userId && typeof amountCents === 'number' && amountCents > 0) {
-        try {
-          await creditWalletAdmin(userId, amountCents, 'Stripe payment intent top-up')
-          console.log(`✅ Wallet credited successfully for user ${userId}: ${amountCents} cents`)
-        } catch (e) {
-          console.error('❌ Failed to credit wallet:', e)
-          throw e // Re-throw to ensure webhook fails if wallet credit fails
-        }
-      } else {
-        console.error('❌ Invalid wallet top-up data:', { userId, amountCents })
-      }
-    } else {
-      console.log('Not a wallet top-up or payment not succeeded:', {
-        purpose: paymentIntent.metadata?.purpose,
-        status: paymentIntent.status
-      })
-    }
+    // Important: Do NOT credit wallet here to avoid double-crediting.
+    // Wallet top-ups are handled in checkout.session.completed only.
   } catch (error) {
     console.error('Error handling payment intent succeeded:', error)
     throw error // Re-throw to ensure webhook fails
@@ -226,9 +203,9 @@ async function handlePaymentSucceeded(invoice: any) {
   try {
     console.log('Payment succeeded for invoice:', invoice.id)
     
-    // Update subscription status to active
+    // Update subscription status to active by Stripe subscription ID
     if (invoice.subscription) {
-      await updateUserSubscription(invoice.subscription, {
+      await updateUserSubscriptionByStripeId(String(invoice.subscription), {
         status: 'active'
       })
     }
@@ -241,9 +218,9 @@ async function handlePaymentFailed(invoice: any) {
   try {
     console.log('Payment failed for invoice:', invoice.id)
     
-    // Update subscription status to past_due
+    // Update subscription status to past_due by Stripe subscription ID
     if (invoice.subscription) {
-      await updateUserSubscription(invoice.subscription, {
+      await updateUserSubscriptionByStripeId(String(invoice.subscription), {
         status: 'past_due'
       })
     }

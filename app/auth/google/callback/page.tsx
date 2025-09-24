@@ -53,8 +53,17 @@ function GoogleCallbackContent() {
         })
 
         if (!tokenResponse.ok) {
-          const errorData = await tokenResponse.json()
-          throw new Error(errorData.error || "Failed to exchange code for token")
+          let errorMsg = "Failed to exchange code for token"
+          try {
+            const errorData = await tokenResponse.json()
+            if (errorData?.error) {
+              errorMsg = errorData.error
+              if (errorData.redirect_uri) {
+                errorMsg += ` (redirect_uri used: ${errorData.redirect_uri})`
+              }
+            }
+          } catch {}
+          throw new Error(errorMsg)
         }
 
         const tokenData = await tokenResponse.json()

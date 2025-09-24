@@ -11,6 +11,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Determine redirect URI reliably: prefer explicit env, then public app URL, then request origin
+    const envRedirect = process.env.GOOGLE_REDIRECT_URI?.replace(/\/$/, "")
+    const origin =
+      envRedirect ||
+      process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
+      process.env.NEXTAUTH_URL?.replace(/\/$/, "") ||
+      request.nextUrl.origin
+    const redirectUri = envRedirect && envRedirect.includes("/auth/google/callback")
+      ? envRedirect
+      : `${origin}/auth/google/callback`
+
     // Exchange authorization code for access token
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -22,15 +33,23 @@ export async function POST(request: NextRequest) {
         client_secret: process.env.GOOGLE_CLIENT_SECRET!,
         code,
         grant_type: "authorization_code",
-        redirect_uri: `${process.env.NEXTAUTH_URL}/auth/google/callback`,
+        redirect_uri: redirectUri,
       }),
     })
 
     if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.text()
-      console.error("Google token exchange error:", errorData)
+      const raw = await tokenResponse.text()
+      let parsed: any = undefined
+      try { parsed = JSON.parse(raw) } catch {}
+      const errorMessage = parsed?.error_description || parsed?.error || raw || "Failed to exchange authorization code for token"
+      console.error("Google token exchange error:", {
+        status: tokenResponse.status,
+        statusText: tokenResponse.statusText,
+        redirectUri,
+        error: parsed || raw,
+      })
       return NextResponse.json(
-        { error: "Failed to exchange authorization code for token" },
+        { error: errorMessage, redirect_uri: redirectUri },
         { status: 400 }
       )
     }
