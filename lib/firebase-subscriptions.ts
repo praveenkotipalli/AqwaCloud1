@@ -128,6 +128,45 @@ export async function updateUserSubscription(
   }
 }
 
+// Helpers to resolve and update by Stripe IDs
+export async function getUserIdByStripeCustomerId(stripeCustomerId: string): Promise<string | null> {
+  try {
+    const qUsers = query(
+      collection(db, USERS_COLLECTION),
+      where('stripeCustomerId', '==', stripeCustomerId)
+    )
+    const usersSnapshot = await getDocs(qUsers)
+    if (usersSnapshot.empty) return null
+    return usersSnapshot.docs[0].id
+  } catch (error) {
+    console.error('Error resolving user by stripeCustomerId:', error)
+    return null
+  }
+}
+
+export async function updateUserSubscriptionByStripeId(
+  stripeSubscriptionId: string,
+  updates: Partial<UserSubscription>
+): Promise<void> {
+  const qSubs = query(
+    collection(db, SUBSCRIPTIONS_COLLECTION),
+    where('stripeSubscriptionId', '==', stripeSubscriptionId)
+  )
+  const subsSnapshot = await getDocs(qSubs)
+  if (subsSnapshot.empty) {
+    console.warn('No local subscription found for stripeSubscriptionId:', stripeSubscriptionId)
+    return
+  }
+  const subId = subsSnapshot.docs[0].id
+  await updateUserSubscription(subId, updates)
+}
+
+export async function cancelUserSubscriptionByStripeId(
+  stripeSubscriptionId: string
+): Promise<void> {
+  await updateUserSubscriptionByStripeId(stripeSubscriptionId, { status: 'canceled', cancelAtPeriodEnd: true })
+}
+
 export async function cancelUserSubscription(subscriptionId: string): Promise<void> {
   try {
     await updateUserSubscription(subscriptionId, {

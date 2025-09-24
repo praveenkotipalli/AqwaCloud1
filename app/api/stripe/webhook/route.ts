@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
-import { createUserSubscription, updateUserSubscription, cancelUserSubscription } from '@/lib/firebase-subscriptions'
+import { createUserSubscription, updateUserSubscriptionByStripeId, cancelUserSubscriptionByStripeId, getUserIdByStripeCustomerId } from '@/lib/firebase-subscriptions'
 import { creditWalletAdmin } from '@/lib/wallet-admin'
+
+// Ensure Node.js runtime so we can read raw body for Stripe signature verification
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2023-10-16',
@@ -156,21 +160,11 @@ async function handleSubscriptionCreated(subscription: any) {
   try {
     console.log('Subscription created:', subscription.id)
     
-    // Get customer details
-    const customer = await stripe.customers.retrieve(subscription.customer)
-    
-    // Find user by email
-    const userEmail = customer.email
-    if (!userEmail) {
-      console.error('No email found for customer:', subscription.customer)
-      return
-    }
-
-    // You'll need to implement a function to find user by email
-    // For now, we'll assume the user ID is stored in customer metadata
-    const userId = customer.metadata?.userId
+    // Resolve user by Stripe customer ID stored on the user document
+    const stripeCustomerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id
+    const userId = await getUserIdByStripeCustomerId(stripeCustomerId)
     if (!userId) {
-      console.error('No userId found in customer metadata')
+      console.error('Could not resolve user for stripeCustomerId:', stripeCustomerId)
       return
     }
 
@@ -201,8 +195,8 @@ async function handleSubscriptionUpdated(subscription: any) {
   try {
     console.log('Subscription updated:', subscription.id)
     
-    // Update subscription status in database
-    await updateUserSubscription(subscription.metadata?.subscriptionId || '', {
+    // Update subscription by Stripe subscription ID
+    await updateUserSubscriptionByStripeId(subscription.id, {
       status: subscription.status,
       currentPeriodStart: new Date(subscription.current_period_start * 1000),
       currentPeriodEnd: new Date(subscription.current_period_end * 1000),
@@ -219,8 +213,8 @@ async function handleSubscriptionDeleted(subscription: any) {
   try {
     console.log('Subscription deleted:', subscription.id)
     
-    // Cancel subscription in database
-    await cancelUserSubscription(subscription.metadata?.subscriptionId || '')
+    // Cancel subscription by Stripe subscription ID
+    await cancelUserSubscriptionByStripeId(subscription.id)
 
     console.log('Subscription canceled in database')
   } catch (error) {
