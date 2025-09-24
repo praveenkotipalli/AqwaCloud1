@@ -3,7 +3,7 @@ import { loadStripe } from '@stripe/stripe-js'
 
 // Initialize Stripe server-side
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-12-18.acacia',
+  apiVersion: '2025-08-27.basil',
 })
 
 // Initialize Stripe client-side
@@ -117,7 +117,6 @@ export async function createCheckoutSession(
   try {
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
-      payment_method_types: ['card'],
       line_items: [
         {
           price: priceId,
@@ -127,7 +126,9 @@ export async function createCheckoutSession(
       mode: 'subscription',
       success_url: `${successUrl}&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: cancelUrl,
-      trial_period_days: trialPeriodDays,
+      subscription_data: trialPeriodDays
+        ? { trial_period_days: trialPeriodDays }
+        : undefined,
       allow_promotion_codes: true,
       billing_address_collection: 'required',
     })
