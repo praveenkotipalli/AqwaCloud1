@@ -93,10 +93,28 @@ const GOOGLE_OAUTH_CONFIG = {
   })(),
 }
 
+// OneDrive env-driven redirect handling (mirrors Google)
+const ONEDRIVE_REDIRECT_BASE =
+  (typeof process !== 'undefined' && (process as any).env?.NEXT_PUBLIC_ONEDRIVE_REDIRECT_URI?.replace(/\/$/, "")) ||
+  (typeof process !== 'undefined' && (process as any).env?.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "")) ||
+  ""
+
+const ONEDRIVE_CALLBACK = "/auth/onedrive/callback"
+
 const ONEDRIVE_OAUTH_CONFIG = {
   clientId: process.env.NEXT_PUBLIC_ONEDRIVE_CLIENT_ID || "d5edfa6f-cee9-4160-b6fc-f1ec28f8b3ff",
   scope: "Files.ReadWrite.All User.Read offline_access",
-  redirectUri: typeof window !== "undefined" ? `${window.location.origin}/auth/onedrive/callback` : "",
+  redirectUri: (() => {
+    if (ONEDRIVE_REDIRECT_BASE) {
+      return ONEDRIVE_REDIRECT_BASE.includes(ONEDRIVE_CALLBACK)
+        ? ONEDRIVE_REDIRECT_BASE
+        : `${ONEDRIVE_REDIRECT_BASE}${ONEDRIVE_CALLBACK}`
+    }
+    if (typeof window !== "undefined") {
+      return `${window.location.origin}${ONEDRIVE_CALLBACK}`
+    }
+    return ""
+  })(),
 }
 
 export function useCloudConnections() {
@@ -443,6 +461,20 @@ export function useCloudConnections() {
     )
 
     try {
+      // Ensure OAuth starts from canonical origin to avoid preview domains
+      if (typeof window !== "undefined" && ONEDRIVE_OAUTH_CONFIG.redirectUri) {
+        try {
+          const redirectUrl = new URL(ONEDRIVE_OAUTH_CONFIG.redirectUri)
+          const redirectOrigin = `${redirectUrl.protocol}//${redirectUrl.host}`
+          const currentOrigin = window.location.origin
+          if (redirectOrigin && redirectOrigin !== currentOrigin) {
+            const target = `${redirectOrigin}${window.location.pathname}${window.location.search}`
+            window.location.replace(target)
+            return
+          }
+        } catch {}
+      }
+
       // Generate OAuth URL for Microsoft
       const authUrl = new URL("https://login.microsoftonline.com/common/oauth2/v2.0/authorize")
       authUrl.searchParams.append("client_id", ONEDRIVE_OAUTH_CONFIG.clientId)

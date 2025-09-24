@@ -16,10 +16,17 @@ export async function POST(request: NextRequest) {
       hasRefreshToken: !!refreshToken,
       codePreview: code ? code.substring(0, 20) + '...' : undefined
     })
-    console.log(`🔧 Environment variables:`, {
+    // Compute redirect URI using envs with robust fallbacks
+    const envRedirect = (process.env.ONEDRIVE_REDIRECT_URI || process.env.NEXT_PUBLIC_ONEDRIVE_REDIRECT_URI)?.replace(/\/$/, "")
+    const origin = envRedirect || process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") || process.env.NEXTAUTH_URL?.replace(/\/$/, "") || request.nextUrl.origin
+    const redirectUri = envRedirect && envRedirect.includes('/auth/onedrive/callback')
+      ? envRedirect
+      : `${origin}/auth/onedrive/callback`
+    console.log(`🔧 OneDrive token endpoint configuration:`, {
       hasClientId: !!process.env.ONEDRIVE_CLIENT_ID,
       hasClientSecret: !!process.env.ONEDRIVE_CLIENT_SECRET,
-      nextAuthUrl: process.env.NEXTAUTH_URL || "http://localhost:3000"
+      origin,
+      redirectUri
     })
 
     // Exchange authorization code or refresh token for access token
@@ -35,14 +42,14 @@ export async function POST(request: NextRequest) {
               client_secret: process.env.ONEDRIVE_CLIENT_SECRET!,
               code,
               grant_type: "authorization_code",
-              redirect_uri: `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/auth/onedrive/callback`,
+              redirect_uri: redirectUri,
             }
           : {
               client_id: process.env.ONEDRIVE_CLIENT_ID!,
               client_secret: process.env.ONEDRIVE_CLIENT_SECRET!,
               refresh_token: refreshToken!,
               grant_type: "refresh_token",
-              redirect_uri: `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/auth/onedrive/callback`,
+              redirect_uri: redirectUri,
             }
       ),
     })
@@ -50,17 +57,22 @@ export async function POST(request: NextRequest) {
     console.log(`📡 Token exchange response status:`, tokenResponse.status, tokenResponse.statusText)
 
     if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.text()
+      const raw = await tokenResponse.text()
+      let parsed: any = undefined
+      try { parsed = JSON.parse(raw) } catch {}
+      const errorMessage = parsed?.error_description || parsed?.error || raw || (code ? "Failed to exchange authorization code" : "Failed to refresh access token")
       console.error("OneDrive token exchange/refresh failed:", {
         status: tokenResponse.status,
         statusText: tokenResponse.statusText,
-        body: errorData
+        redirectUri,
+        error: parsed || raw
       })
       return NextResponse.json(
         { 
-          error: code ? "Failed to exchange authorization code" : "Failed to refresh access token",
+          error: errorMessage,
+          redirect_uri: redirectUri,
           upstreamStatus: tokenResponse.status,
-          upstreamBody: errorData
+          upstreamBody: parsed || raw
         },
         { status: 400 }
       )
