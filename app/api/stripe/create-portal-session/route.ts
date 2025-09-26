@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createBillingPortalSession, createStripeCustomer, stripe } from '@/lib/stripe'
-import { getUserProfile, createUserProfile, updateUserProfile } from '@/lib/firebase-subscriptions'
+import { getAdminDb } from '@/lib/firebase-admin'
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,30 +25,36 @@ export async function POST(request: NextRequest) {
 
     let stripeCustomerId: string | undefined
 
-    // Try to find existing customer by email first
-    if (email) {
+    // Prefer stored mapping via Admin (ensures portal and UI use same customer)
+    const adminDb = getAdminDb()
+    const userSnap = await adminDb.collection('users').doc(userId).get()
+    const profile = userSnap.exists ? (userSnap.data() as any) : null
+    if (profile?.stripeCustomerId) {
+      stripeCustomerId = profile.stripeCustomerId
+    }
+
+    // Fallback: find by email; create if none
+    if (!stripeCustomerId && email) {
       const existing = await stripe.customers.list({ email, limit: 1 })
       if (existing.data.length > 0) {
         stripeCustomerId = existing.data[0].id
       }
     }
-    // Create if none
     if (!stripeCustomerId) {
       const customer = await createStripeCustomer(email, name)
       stripeCustomerId = customer.id
     }
 
-    // Best-effort Firestore sync (ignore failures due to security rules)
-    try {
-      let userProfile = await getUserProfile(userId)
-      if (!userProfile) {
-        await createUserProfile(userId, email, name, stripeCustomerId)
-      } else if (!userProfile.stripeCustomerId) {
-        await updateUserProfile(userId, { stripeCustomerId })
-      }
-    } catch (e) {
-      console.warn('Non-fatal: failed to sync Stripe customer to Firestore', e)
-    }
+    // Persist mapping with Admin
+    await adminDb.collection('users').doc(userId).set(
+      {
+        email,
+        name,
+        stripeCustomerId,
+        updatedAt: new Date()
+      },
+      { merge: true }
+    )
 
     // Create billing portal session
     const session = await createBillingPortalSession(

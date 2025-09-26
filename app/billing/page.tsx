@@ -57,6 +57,7 @@ export default function BillingPage() {
       })
       if (resp.ok) {
         const data = await resp.json()
+        console.log('payment methods response:', data)
         setPaymentMethods(data.paymentMethods || [])
       } else {
         console.warn('Fetch payment methods failed:', resp.status)

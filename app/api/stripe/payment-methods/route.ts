@@ -44,23 +44,52 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ paymentMethods: [] })
     }
 
-    const pms = await stripe.paymentMethods.list({
-      customer: customerId,
-      type: 'card',
-    })
+    console.log('[payment-methods] Using customerId:', customerId)
 
-    // Determine default from customer invoice_settings if present
-    const customer = await stripe.customers.retrieve(customerId)
-    const defaultPmId = (customer as any)?.invoice_settings?.default_payment_method as string | null
+    // Gather payment methods across all customers with the same email
+    const allCustomerIds: string[] = []
+    if (customerId) allCustomerIds.push(customerId)
+    if (email) {
+      const candidates = await stripe.customers.list({ email, limit: 10 })
+      for (const c of candidates.data) {
+        if (!allCustomerIds.includes(c.id)) allCustomerIds.push(c.id)
+      }
+    }
 
-    const paymentMethods = pms.data.map(pm => ({
-      id: pm.id,
-      brand: pm.card?.brand,
-      last4: pm.card?.last4,
-      exp_month: pm.card?.exp_month,
-      exp_year: pm.card?.exp_year,
-      isDefault: pm.id === defaultPmId,
-    }))
+    const seen = new Set<string>()
+    const aggregated: Array<{ id: string; brand?: string; last4?: string; exp_month?: number; exp_year?: number; isDefault?: boolean }> = []
+    let chosenCustomerId = customerId
+
+    for (const cid of allCustomerIds) {
+      const list = await stripe.paymentMethods.list({ customer: cid, type: 'card' })
+      console.log('[payment-methods] Customer', cid, 'methods:', list.data.length)
+      if (list.data.length > 0 && !chosenCustomerId) {
+        chosenCustomerId = cid
+      }
+      const customer = await stripe.customers.retrieve(cid)
+      const defaultPmId = (customer as any)?.invoice_settings?.default_payment_method as string | null
+      for (const pm of list.data) {
+        if (seen.has(pm.id)) continue
+        seen.add(pm.id)
+        aggregated.push({
+          id: pm.id,
+          brand: pm.card?.brand,
+          last4: pm.card?.last4,
+          exp_month: pm.card?.exp_month,
+          exp_year: pm.card?.exp_year,
+          isDefault: pm.id === defaultPmId,
+        })
+      }
+    }
+
+    // If our stored mapping differs from the customer that has a default, update mapping
+    const hasDefault = aggregated.find(pm => pm.isDefault)
+    if (hasDefault && chosenCustomerId && chosenCustomerId !== customerId) {
+      console.log('[payment-methods] Updating stored stripeCustomerId to', chosenCustomerId)
+      await getAdminDb().collection('users').doc(userId!).set({ stripeCustomerId: chosenCustomerId, updatedAt: new Date() }, { merge: true })
+    }
+
+    const paymentMethods = aggregated
 
     return NextResponse.json({ paymentMethods })
   } catch (error: any) {
