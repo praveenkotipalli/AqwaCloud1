@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
+import { getAdminDb } from '@/lib/firebase-admin'
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,11 +15,31 @@ export async function POST(request: NextRequest) {
     }
     const token = authHeader.split('Bearer ')[1]
     const tokenPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-    const userId = tokenPayload.user_id
+    const userId = tokenPayload.user_id as string
+    const email = tokenPayload.email as string | undefined
+    const name = tokenPayload.name as string | undefined
+
+    // Resolve Stripe customer (prefer stored mapping)
+    const adminDb = getAdminDb()
+    const userSnap = await adminDb.collection('users').doc(userId).get()
+    let stripeCustomerId: string | undefined = userSnap.exists ? (userSnap.data() as any)?.stripeCustomerId : undefined
+    if (!stripeCustomerId && email) {
+      const existing = await stripe.customers.list({ email, limit: 1 })
+      if (existing.data.length > 0) {
+        stripeCustomerId = existing.data[0].id
+      }
+    }
+    if (!stripeCustomerId) {
+      const customer = await stripe.customers.create({ email, name })
+      stripeCustomerId = customer.id
+      await adminDb.collection('users').doc(userId).set({ stripeCustomerId, email, name, updatedAt: new Date() }, { merge: true })
+    }
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: ['card'],
+      customer: stripeCustomerId,
+      payment_method_collection: 'if_required',
       line_items: [
         {
           price_data: {
@@ -36,6 +57,7 @@ export async function POST(request: NextRequest) {
         userId
       },
       payment_intent_data: {
+        customer: stripeCustomerId,
         metadata: {
           purpose: 'wallet_topup',
           userId
