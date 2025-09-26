@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { auth } from "@/lib/firebase"
+import { db, auth } from "@/lib/firebase"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -25,6 +25,7 @@ import { useSubscription } from "@/hooks/use-subscription"
 import { useWallet } from "@/hooks/use-wallet"
 import { formatCurrency, formatDataSize } from "@/lib/subscription"
 import { getStripe } from "@/lib/stripe"
+import { collection, limit, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore"
 
 export default function BillingPage() {
   const { isAuthenticated, user, loading } = useAuth()
@@ -34,6 +35,7 @@ export default function BillingPage() {
   const [loadingPortal, setLoadingPortal] = useState(false)
   const [loadingTopUp, setLoadingTopUp] = useState<string | null>(null)
   const [paymentMethods, setPaymentMethods] = useState<Array<{ id: string; brand?: string; last4?: string; exp_month?: number; exp_year?: number; isDefault?: boolean }>>([])
+  const [fireHistory, setFireHistory] = useState<Array<{ id: string; timestamp: number; fromService: string; toService: string; totalBytes: number; costUsd: number; status: string }>>([])
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -176,39 +178,59 @@ export default function BillingPage() {
     }
   }
 
+  // Load recent transfers from Firestore (same as Dashboard)
+  useEffect(() => {
+    if (loading) return
+    if (!user?.id) return
+
+    const historyQ = query(
+      collection(db, "users", user.id, "transferHistory"),
+      orderBy("timestamp", "desc"),
+      limit(25)
+    )
+    const unsub = onSnapshot(historyQ, snap => {
+      const items = snap.docs.map(d => {
+        const data: any = d.data()
+        const ts = (data.timestamp instanceof Timestamp) ? data.timestamp.toMillis() : (data.timestamp || Date.now())
+        return {
+          id: d.id,
+          timestamp: ts,
+          fromService: data.fromService,
+          toService: data.toService,
+          totalBytes: data.totalBytes || 0,
+          costUsd: data.costUsd || 0,
+          status: data.status || "completed",
+        }
+      })
+      setFireHistory(items)
+    })
+
+    return () => { try { unsub() } catch {} }
+  }, [loading, user?.id])
+
+  const formatBytes = (bytes: number) => {
+    if (!bytes || bytes <= 0) return "—"
+    const units = ["B","KB","MB","GB","TB"]
+    let i = 0
+    let n = bytes
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
+    const value = i === 0 ? n : Math.round(n * 10) / 10
+    return `${value} ${units[i]}`
+  }
+
   const currentUsage = usage || { dataTransferred: 0, transferCount: 0 }
   const monthlyLimit = currentPlan?.dataLimit || 1
   const usagePercentage = (currentUsage.dataTransferred / monthlyLimit) * 100
 
-  const recentTransfers = [
-    {
-      id: "1",
-      date: "2024-01-15",
-      from: "Google Drive",
-      to: "OneDrive",
-      size: "2.4 GB",
-      cost: "$0.024",
-      status: "completed",
-    },
-    {
-      id: "2",
-      date: "2024-01-14",
-      from: "Dropbox",
-      to: "Google Drive",
-      size: "890 MB",
-      cost: "$0.009",
-      status: "completed",
-    },
-    {
-      id: "3",
-      date: "2024-01-12",
-      from: "OneDrive",
-      to: "AWS S3",
-      size: "5.2 GB",
-      cost: "$0.052",
-      status: "completed",
-    },
-  ]
+  const recentTransfers = fireHistory.slice(0, 10).map(item => ({
+    id: item.id,
+    date: new Date(item.timestamp).toLocaleString(),
+    from: item.fromService,
+    to: item.toService,
+    size: formatBytes(item.totalBytes),
+    cost: `$${(item.costUsd || 0).toFixed(3)}`,
+    status: item.status
+  }))
 
   const monthlyStats = {
     totalTransfers: currentUsage.transferCount,
@@ -341,7 +363,7 @@ export default function BillingPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {recentTransfers.map((transfer, index) => (
+                    {recentTransfers.length > 0 ? recentTransfers.map((transfer, index) => (
                       <motion.div
                         key={transfer.id}
                         initial={{ opacity: 0, x: -20 }}
@@ -366,7 +388,9 @@ export default function BillingPage() {
                           <div className="font-medium">{transfer.cost}</div>
                         </div>
                       </motion.div>
-                    ))}
+                    )) : (
+                      <div className="text-center text-sm text-muted-foreground py-6">NO RECENT TRANSFER</div>
+                    )}
                   </div>
 
                   <div className="mt-6 text-center">
