@@ -45,6 +45,13 @@ function DashboardContent() {
     }
   }, [isAuthenticated, loading, router])
 
+  // Redirect admins to admin dashboard
+  useEffect(() => {
+    if (!loading && user?.role === 'admin') {
+      router.replace('/admin')
+    }
+  }, [loading, user?.role, router])
+
   // Handle successful payment callback
   useEffect(() => {
     const success = searchParams.get('success')

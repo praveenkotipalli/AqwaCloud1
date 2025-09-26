@@ -11,13 +11,15 @@ import {
   User as FirebaseUser,
   updateProfile
 } from "firebase/auth"
-import { auth } from "@/lib/firebase"
+import { auth, db } from "@/lib/firebase"
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"
 import { signInAnonymously } from "firebase/auth"
 
 interface User {
   id: string
   email: string
   name: string
+  role: "user" | "admin"
   plan: "free" | "personal" | "pro" | "enterprise"
   usage: {
     transfersThisMonth: number
@@ -50,18 +52,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {
-        // Create user object directly from Firebase Auth data
-        const userData: User = {
-          id: firebaseUser.uid,
-          email: firebaseUser.email || "",
-          name: firebaseUser.displayName || "",
-          plan: "free",
-          usage: {
-            transfersThisMonth: 0,
-            storageUsed: 0
+        // Ensure user doc exists and read role/plan
+        try {
+          const userRef = doc(db, "users", firebaseUser.uid)
+          const snap = await getDoc(userRef)
+          if (!snap.exists()) {
+            await setDoc(userRef, {
+              email: firebaseUser.email || "",
+              name: firebaseUser.displayName || "",
+              role: "user",
+              plan: "free",
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            })
           }
+          const data = (await getDoc(userRef)).data() as any
+          const userData: User = {
+            id: firebaseUser.uid,
+            email: firebaseUser.email || "",
+            name: firebaseUser.displayName || data?.name || "",
+            role: (data?.role === "admin" ? "admin" : "user"),
+            plan: (data?.plan as any) || "free",
+            usage: {
+              transfersThisMonth: 0,
+              storageUsed: 0
+            }
+          }
+          setUser(userData)
+        } catch (e) {
+          const userData: User = {
+            id: firebaseUser.uid,
+            email: firebaseUser.email || "",
+            name: firebaseUser.displayName || "",
+            role: "user",
+            plan: "free",
+            usage: { transfersThisMonth: 0, storageUsed: 0 }
+          }
+          setUser(userData)
         }
-        setUser(userData)
       } else {
         setUser(null)
       }
