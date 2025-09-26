@@ -14,9 +14,12 @@ function AdminContent() {
   const { user, isAuthenticated, loading, logout } = useAuth() as any
   const router = useRouter()
   const [users, setUsers] = useState<any[]>([])
+  const [query, setQuery] = useState<string>("")
+  const [roleFilter, setRoleFilter] = useState<'all'|'user'|'admin'>('all')
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<{ totalIncomeCents: number; monthIncomeCents: number } | null>(null)
+  const [metricsLoading, setMetricsLoading] = useState<boolean>(false)
 
   useEffect(() => {
     if (!loading && (!isAuthenticated || user?.role !== 'admin')) {
@@ -41,6 +44,7 @@ function AdminContent() {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
+        setMetricsLoading(true)
         const res = await fetch('/api/admin/metrics')
         const data = await res.json()
         setMetrics({ totalIncomeCents: data.totalIncomeCents || 0, monthIncomeCents: data.monthIncomeCents || 0 })
@@ -52,6 +56,8 @@ function AdminContent() {
         }
       } catch (e) {
         console.error(e)
+      } finally {
+        setMetricsLoading(false)
       }
     }
     fetchMetrics()
@@ -59,6 +65,13 @@ function AdminContent() {
 
   const totalUsers = users.length
   const adminCount = users.filter(u => u.role === 'admin').length
+
+  const filteredUsers = users.filter(u => {
+    const q = (query || '').toLowerCase()
+    const matchesQuery = !q || (u.email||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q)
+    const matchesRole = roleFilter === 'all' ? true : (u.role === roleFilter)
+    return matchesQuery && matchesRole
+  })
 
   const handleRole = async (id: string, role: 'user'|'admin') => {
     try {
@@ -92,7 +105,7 @@ function AdminContent() {
             <span className="text-xl font-bold gradient-text">AqwaCloud Admin</span>
           </Link>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push('/dashboard')}>User View</Button>
+            <Button variant="outline" size="sm" onClick={() => router.push('/dashboard?asUser=1')}>User View</Button>
             <Button size="sm" variant="outline" onClick={() => logout?.()}>
               <LogOut className="h-4 w-4 mr-2" /> Logout
             </Button>
@@ -110,14 +123,47 @@ function AdminContent() {
           </div>
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search by email or name"
+            className="w-full border border-border rounded-md px-3 py-2 bg-background"
+          />
+          <select
+            value={roleFilter}
+            onChange={e => setRoleFilter(e.target.value as any)}
+            className="w-full border border-border rounded-md px-3 py-2 bg-background"
+          >
+            <option value="all">All roles</option>
+            <option value="admin">Admins</option>
+            <option value="user">Users</option>
+          </select>
+          <div className="flex gap-2">
+            <Button variant="outline" className="w-full" onClick={() => { setQuery(""); setRoleFilter('all') }}>Clear</Button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">Total Income</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold gradient-text">${((metrics?.totalIncomeCents||0)/100).toFixed(2)}</div></CardContent>
+            <CardContent>
+              {metricsLoading ? (
+                <div className="text-sm text-muted-foreground">Loading...</div>
+              ) : (
+                <div className="text-2xl font-bold gradient-text">${((metrics?.totalIncomeCents||0)/100).toFixed(2)}</div>
+              )}
+            </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">Income This Month</CardTitle></CardHeader>
-            <CardContent><div className="text-2xl font-bold gradient-text">${((metrics?.monthIncomeCents||0)/100).toFixed(2)}</div></CardContent>
+            <CardContent>
+              {metricsLoading ? (
+                <div className="text-sm text-muted-foreground">Loading...</div>
+              ) : (
+                <div className="text-2xl font-bold gradient-text">${((metrics?.monthIncomeCents||0)/100).toFixed(2)}</div>
+              )}
+            </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">Admins</CardTitle></CardHeader>
@@ -151,7 +197,17 @@ function AdminContent() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users.map(u => (
+                  {loadingUsers && (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">Loading...</TableCell>
+                    </TableRow>
+                  )}
+                  {!loadingUsers && filteredUsers.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">No users found</TableCell>
+                    </TableRow>
+                  )}
+                  {!loadingUsers && filteredUsers.map(u => (
                     <TableRow key={u.id}>
                       <TableCell>{u.email || '—'}</TableCell>
                       <TableCell>{u.name || '—'}</TableCell>

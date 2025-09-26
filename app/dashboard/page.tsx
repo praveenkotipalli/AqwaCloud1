@@ -34,6 +34,7 @@ function DashboardContent() {
   const { subscription, usage, currentPlan, refreshSubscription } = useSubscription()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const asUserView = searchParams.get('asUser') === '1'
   const { connections, transferJobs, transferHistory, getRealTimeStats } = useCloudConnections()
   const [rtStats, setRtStats] = useState<any>(null)
   const [fireHistory, setFireHistory] = useState<any[]>([])
@@ -45,9 +46,11 @@ function DashboardContent() {
     }
   }, [isAuthenticated, loading, router])
 
-  // Redirect admins to admin dashboard
+  // Redirect admins to admin dashboard unless forced user view
   useEffect(() => {
-    if (!loading && user?.role === 'admin') {
+    const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+    const asUser = params.get('asUser') === '1'
+    if (!loading && user?.role === 'admin' && !asUser) {
       router.replace('/admin')
     }
   }, [loading, user?.role, router])
@@ -356,6 +359,11 @@ function DashboardContent() {
 
           <div className="flex items-center space-x-2 sm:space-x-4">
             <Badge variant="secondary" className="hidden sm:inline-flex">Dashboard</Badge>
+            {user?.role === 'admin' && asUserView && (
+              <Button size="sm" variant="outline" asChild>
+                <Link href="/admin">Admin View</Link>
+              </Button>
+            )}
             <Button size="sm" className="bg-accent hover:bg-accent/90 hidden sm:flex" asChild>
               <Link href="/transfer">
                 <Plus className="h-4 w-4 mr-2" />
