@@ -320,39 +320,41 @@ export default function TransfersPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
-      <nav className="fixed top-0 w-full z-50 px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
+      <nav className="fixed top-0 w-full z-50 px-4 sm:px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <Link href="/dashboard" className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center">
-              <Cloud className="h-5 w-5 text-white" />
+            <div className="w-6 h-6 sm:w-8 sm:h-8 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center">
+              <Cloud className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
             </div>
-            <span className="text-xl font-bold gradient-text">AqwaCloud</span>
+            <span className="text-lg sm:text-xl font-bold gradient-text">AqwaCloud</span>
           </Link>
 
-          <div className="flex items-center space-x-4">
-            <Button variant="outline" size="sm" asChild>
+          <div className="flex items-center space-x-2 sm:space-x-4">
+            <Button variant="outline" size="sm" asChild className="text-xs sm:text-sm">
               <Link href="/dashboard">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Dashboard
+                <ArrowLeft className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">Back to Dashboard</span>
+                <span className="sm:hidden">Back</span>
               </Link>
             </Button>
-            <Button size="sm" className="bg-accent hover:bg-accent/90" asChild>
+            <Button size="sm" className="bg-accent hover:bg-accent/90 text-xs sm:text-sm" asChild>
               <Link href="/transfer">
-                <ArrowRightLeft className="h-4 w-4 mr-2" />
-                New Transfer
+                <ArrowRightLeft className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">New Transfer</span>
+                <span className="sm:hidden">New</span>
               </Link>
             </Button>
           </div>
         </div>
       </nav>
 
-      <div className="pt-24 pb-12 px-6">
+      <div className="pt-20 sm:pt-24 pb-12 px-4 sm:px-6">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
-          <div className="mb-8">
+          <div className="mb-6 sm:mb-8">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8 }}>
-              <h1 className="text-4xl font-bold mb-2">All Transfers</h1>
-              <p className="text-xl text-muted-foreground">Manage and monitor all your file transfers</p>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-2">All Transfers</h1>
+              <p className="text-base sm:text-lg lg:text-xl text-muted-foreground">Manage and monitor all your file transfers</p>
             </motion.div>
           </div>
 
@@ -365,19 +367,19 @@ export default function TransfersPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
                   <Input
                     placeholder="Search transfers..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
+                    className="pl-10 text-sm sm:text-base"
                   />
                 </div>
 
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger>
+                  <SelectTrigger className="text-sm sm:text-base">
                     <SelectValue placeholder="Filter by status" />
                   </SelectTrigger>
                   <SelectContent>
@@ -391,7 +393,7 @@ export default function TransfersPage() {
                 </Select>
 
                 <Select value={dateFilter} onValueChange={setDateFilter}>
-                  <SelectTrigger>
+                  <SelectTrigger className="text-sm sm:text-base">
                     <SelectValue placeholder="Filter by date" />
                   </SelectTrigger>
                   <SelectContent>
@@ -409,6 +411,7 @@ export default function TransfersPage() {
                     setStatusFilter("all")
                     setDateFilter("all")
                   }}
+                  className="text-sm sm:text-base"
                 >
                   Clear Filters
                 </Button>
@@ -439,37 +442,37 @@ export default function TransfersPage() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5, delay: index * 0.05 }}
-                    className="p-6 rounded-lg border border-border/50 hover:bg-muted/30 transition-colors"
+                    className="p-4 sm:p-6 rounded-lg border border-border/50 hover:bg-muted/30 transition-colors"
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-4">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+                      <div className="flex items-center space-x-3 sm:space-x-4 min-w-0 flex-1">
                         <div className="flex items-center space-x-2">
-                          <div className="text-2xl">{transfer.fromIcon}</div>
-                          <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
-                          <div className="text-2xl">{transfer.toIcon}</div>
+                          <div className="text-xl sm:text-2xl">{transfer.fromIcon}</div>
+                          <ArrowRightLeft className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+                          <div className="text-xl sm:text-2xl">{transfer.toIcon}</div>
                         </div>
-                        <div>
-                          <div className="font-medium text-lg">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm sm:text-base lg:text-lg truncate">
                             {transfer.from} → {transfer.to}
                           </div>
-                          <div className="text-sm text-muted-foreground">
+                          <div className="text-xs sm:text-sm text-muted-foreground">
                             {transfer.date} • {transfer.size} • {transfer.files} files • {transfer.cost}
                           </div>
                           {transfer.scheduledFor && (
-                            <div className="text-sm text-blue-600 mt-1">
+                            <div className="text-xs sm:text-sm text-blue-600 mt-1">
                               <Calendar className="h-3 w-3 inline mr-1" />
                               {transfer.scheduledFor}
                             </div>
                           )}
                           {transfer.errorMessage && (
-                            <div className="text-sm text-red-600 mt-1">
+                            <div className="text-xs sm:text-sm text-red-600 mt-1">
                               <AlertCircle className="h-3 w-3 inline mr-1" />
                               {transfer.errorMessage}
                             </div>
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-2 sm:space-x-4 self-end sm:self-auto">
                         {getStatusBadge(transfer.status, transfer.progress)}
                         {getActionButtons(transfer)}
                       </div>

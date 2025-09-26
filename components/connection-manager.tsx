@@ -79,7 +79,7 @@ export function ConnectionManager() {
           variant="outline"
           size="sm"
           onClick={() => handleDisconnect(connection.id)}
-          className="border-red-500/20 text-red-400 hover:bg-red-500/10"
+          className="border-red-500/20 text-red-400 hover:bg-red-500/10 text-xs sm:text-sm"
         >
           Disconnect
         </Button>
@@ -92,12 +92,13 @@ export function ConnectionManager() {
         disabled={isConnecting === connection.id}
         variant="outline"
         size="sm"
-        className="border-white/20 text-white hover:bg-white/10"
+        className="border-white/20 text-white hover:bg-white/10 text-xs sm:text-sm"
       >
         {isConnecting === connection.id ? (
           <>
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            Connecting...
+            <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin mr-1 sm:mr-2" />
+            <span className="hidden sm:inline">Connecting...</span>
+            <span className="sm:hidden">Connecting</span>
           </>
         ) : (
           "Connect"
@@ -120,16 +121,16 @@ export function ConnectionManager() {
         </Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
         {connections.map((connection) => (
           <Card key={connection.id} className="bg-white/5 border-white/20">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2 text-white text-base">
+                <CardTitle className="flex items-center gap-2 text-white text-sm sm:text-base">
                   <img 
                     src={connection.icon} 
                     alt={connection.name} 
-                    className="w-6 h-6 rounded"
+                    className="w-5 h-5 sm:w-6 sm:h-6 rounded"
                   />
                   {connection.name}
                 </CardTitle>
@@ -139,7 +140,7 @@ export function ConnectionManager() {
             
             <CardContent className="space-y-3">
               {/* Status and Connection Info */}
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center justify-between text-xs sm:text-sm">
                 <span className={getStatusColor(connection.status)}>
                   {connection.status.charAt(0).toUpperCase() + connection.status.slice(1)}
                 </span>
@@ -152,8 +153,8 @@ export function ConnectionManager() {
 
               {/* Error Message */}
               {connection.error && (
-                <div className="flex items-center gap-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-sm">
-                  <AlertCircle className="h-4 w-4 text-red-400" />
+                <div className="flex items-center gap-2 p-2 bg-red-500/10 border border-red-500/20 rounded text-xs sm:text-sm">
+                  <AlertCircle className="h-3 w-3 sm:h-4 sm:w-4 text-red-400" />
                   <span className="text-red-400 text-xs">{connection.error}</span>
                 </div>
               )}

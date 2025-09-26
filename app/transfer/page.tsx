@@ -390,56 +390,59 @@ export default function TransferPage() {
       {/* Header */}
       <div className="border-b border-white/10 bg-white/5">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between h-14 sm:h-16">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
               <Link href="/dashboard">
-                <Button variant="ghost" size="sm" className="text-white hover:bg-white/10">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back to Dashboard
+                <Button variant="ghost" size="sm" className="text-white hover:bg-white/10 text-xs sm:text-sm">
+                  <ArrowLeft className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  <span className="hidden sm:inline">Back to Dashboard</span>
+                  <span className="sm:hidden">Back</span>
                 </Button>
               </Link>
-              <h1 className="text-2xl font-bold text-white">File Transfer</h1>
+              <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-white truncate">File Transfer</h1>
             </div>
             
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-4">
               <Button
                 onClick={() => setShowQueue(!showQueue)}
                 variant="outline"
-                className="border-white/20 text-white hover:bg-white/10"
+                className="border-white/20 text-white hover:bg-white/10 text-xs sm:text-sm"
               >
-                <Clock className="h-4 w-4 mr-2" />
-                Queue ({transferQueue.length})
+                <Clock className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">Queue ({transferQueue.length})</span>
+                <span className="sm:hidden">({transferQueue.length})</span>
               </Button>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
         {/* Cloud Connections Status */}
         <div className="mb-6">
           <Card className="bg-white/5 border-white/20">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <h3 className="text-lg font-semibold text-white">Cloud Services</h3>
-                  <div className="flex items-center gap-2">
+            <CardContent className="p-3 sm:p-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                  <h3 className="text-base sm:text-lg font-semibold text-white">Cloud Services</h3>
+                  <div className="flex items-center gap-2 flex-wrap">
                     {connectedServices.map((service) => (
-                      <div key={service.id} className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full">
-                        <img src={service.icon} alt={service.name} className="w-4 h-4 rounded" />
-                        <span className="text-white text-sm">{service.name}</span>
-                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                      <div key={service.id} className="flex items-center gap-2 px-2 sm:px-3 py-1 bg-white/10 rounded-full">
+                        <img src={service.icon} alt={service.name} className="w-3 h-3 sm:w-4 sm:h-4 rounded" />
+                        <span className="text-white text-xs sm:text-sm">{service.name}</span>
+                        <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-green-400 rounded-full"></div>
                       </div>
                     ))}
                     {connectedServices.length === 0 && (
-                      <span className="text-slate-400 text-sm">No services connected</span>
+                      <span className="text-slate-400 text-xs sm:text-sm">No services connected</span>
                     )}
                   </div>
                 </div>
                 <Link href="/connections">
-                  <Button variant="outline" size="sm" className="border-white/20 text-white hover:bg-white/10">
-                    <Settings className="h-4 w-4 mr-2" />
-                    Manage Connections
+                  <Button variant="outline" size="sm" className="border-white/20 text-white hover:bg-white/10 text-xs sm:text-sm">
+                    <Settings className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                    <span className="hidden sm:inline">Manage Connections</span>
+                    <span className="sm:hidden">Manage</span>
                   </Button>
                 </Link>
               </div>
@@ -454,12 +457,12 @@ export default function TransferPage() {
               <CardTitle className="text-white">Transfer Configuration</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                 {/* Source Service */}
                 <div className="space-y-2">
-                  <Label className="text-white">Source Service</Label>
+                  <Label className="text-white text-sm sm:text-base">Source Service</Label>
                   <Select value={sourceService} onValueChange={setSourceService}>
-                    <SelectTrigger className="bg-white/10 border-white/20 text-white">
+                    <SelectTrigger className="bg-white/10 border-white/20 text-white text-sm sm:text-base">
                       <SelectValue placeholder="Select source service" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700">
@@ -477,9 +480,9 @@ export default function TransferPage() {
 
                 {/* Destination Service */}
                 <div className="space-y-2">
-                  <Label className="text-white">Destination Service</Label>
+                  <Label className="text-white text-sm sm:text-base">Destination Service</Label>
                   <Select value={destinationService} onValueChange={setDestinationService}>
-                    <SelectTrigger className="bg-white/10 border-white/20 text-white">
+                    <SelectTrigger className="bg-white/10 border-white/20 text-white text-sm sm:text-base">
                       <SelectValue placeholder="Select destination service" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700">
@@ -497,14 +500,14 @@ export default function TransferPage() {
               </div>
 
               {/* Transfer Options */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <div className="flex items-center space-x-2">
                   <Switch
                     id="overwrite"
                     checked={transferConfig.overwriteExisting}
                     onCheckedChange={(checked) => setTransferConfig(prev => ({ ...prev, overwriteExisting: checked }))}
                   />
-                  <Label htmlFor="overwrite" className="text-white text-sm">Overwrite Existing</Label>
+                  <Label htmlFor="overwrite" className="text-white text-xs sm:text-sm">Overwrite Existing</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Switch
@@ -512,7 +515,7 @@ export default function TransferPage() {
                     checked={transferConfig.preserveTimestamps}
                     onCheckedChange={(checked) => setTransferConfig(prev => ({ ...prev, preserveTimestamps: checked }))}
                   />
-                  <Label htmlFor="timestamps" className="text-white text-sm">Preserve Timestamps</Label>
+                  <Label htmlFor="timestamps" className="text-white text-xs sm:text-sm">Preserve Timestamps</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Switch
@@ -520,7 +523,7 @@ export default function TransferPage() {
                     checked={transferConfig.createFolders}
                     onCheckedChange={(checked) => setTransferConfig(prev => ({ ...prev, createFolders: checked }))}
                   />
-                  <Label htmlFor="folders" className="text-white text-sm">Create Folders</Label>
+                  <Label htmlFor="folders" className="text-white text-xs sm:text-sm">Create Folders</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Switch
@@ -528,7 +531,7 @@ export default function TransferPage() {
                     checked={transferConfig.skipExisting}
                     onCheckedChange={(checked) => setTransferConfig(prev => ({ ...prev, skipExisting: checked }))}
                   />
-                  <Label htmlFor="skip" className="text-white text-sm">Skip Existing</Label>
+                  <Label htmlFor="skip" className="text-white text-xs sm:text-sm">Skip Existing</Label>
                 </div>
               </div>
 
@@ -697,7 +700,7 @@ export default function TransferPage() {
         </div>
 
         {/* File Selection */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 mb-6 sm:mb-8">
           {/* Source Files */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -819,25 +822,27 @@ export default function TransferPage() {
         )}
 
         {/* Transfer Actions */}
-        <div className="flex justify-center gap-4">
+        <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
           <Button
             onClick={handleStartTransfer}
             disabled={!sourceService || !destinationService || selectedSourceFiles.length === 0}
             size="lg"
-            className="bg-blue-600 hover:bg-blue-700 text-white px-8"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 sm:px-8 text-sm sm:text-base"
           >
-            <ArrowLeftRight className="h-5 w-5 mr-2" />
-            {enableRealTime ? 'Start Real-Time Transfer' : 'Start Transfer'}
+            <ArrowLeftRight className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+            <span className="hidden sm:inline">{enableRealTime ? 'Start Real-Time Transfer' : 'Start Transfer'}</span>
+            <span className="sm:hidden">{enableRealTime ? 'Real-Time' : 'Transfer'}</span>
           </Button>
 
           <Button
             onClick={handleStartPersistentTransfer}
             disabled={!sourceService || !destinationService || selectedSourceFiles.length === 0}
             size="lg"
-            className="bg-green-600 hover:bg-green-700 text-white px-8"
+            className="bg-green-600 hover:bg-green-700 text-white px-4 sm:px-8 text-sm sm:text-base"
           >
-            <RefreshCw className="h-5 w-5 mr-2" />
-            Start Persistent Transfer
+            <RefreshCw className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+            <span className="hidden sm:inline">Start Persistent Transfer</span>
+            <span className="sm:hidden">Persistent</span>
           </Button>
           
           {activeSessions.length > 0 && (
@@ -847,10 +852,11 @@ export default function TransferPage() {
               }}
               variant="outline"
               size="lg"
-              className="border-red-500 text-red-500 hover:bg-red-500 hover:text-white px-8"
+              className="border-red-500 text-red-500 hover:bg-red-500 hover:text-white px-4 sm:px-8 text-sm sm:text-base"
             >
-              <X className="h-5 w-5 mr-2" />
-              Stop All Real-Time Sessions
+              <X className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+              <span className="hidden sm:inline">Stop All Real-Time Sessions</span>
+              <span className="sm:hidden">Stop All</span>
             </Button>
           )}
           

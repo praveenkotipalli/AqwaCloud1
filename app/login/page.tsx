@@ -33,18 +33,18 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-6">
+    <div className="min-h-screen bg-background flex items-center justify-center px-4 sm:px-6">
       <div className="w-full max-w-md">
         {/* Header */}
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center space-x-2 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center">
-              <Cloud className="h-6 w-6 text-white" />
+        <div className="text-center mb-6 sm:mb-8">
+          <Link href="/" className="inline-flex items-center space-x-2 mb-4 sm:mb-6">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-r from-accent to-secondary rounded-lg flex items-center justify-center">
+              <Cloud className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
             </div>
-            <span className="text-2xl font-bold gradient-text">AqwaCloud</span>
+            <span className="text-xl sm:text-2xl font-bold gradient-text">AqwaCloud</span>
           </Link>
-          <h1 className="text-3xl font-bold mb-2">Welcome back</h1>
-          <p className="text-muted-foreground">Sign in to your account to continue transferring files</p>
+          <h1 className="text-2xl sm:text-3xl font-bold mb-2">Welcome back</h1>
+          <p className="text-sm sm:text-base text-muted-foreground">Sign in to your account to continue transferring files</p>
         </div>
 
         {/* Login Form */}
@@ -65,7 +65,7 @@ export default function LoginPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full border-slate-600 text-white hover:bg-slate-700 bg-transparent"
+                  className="w-full border-slate-600 text-white hover:bg-slate-700 bg-transparent text-sm sm:text-base"
                   onClick={async () => {
                     const result = await loginWithGoogle()
                     if (result.success) {
@@ -76,7 +76,7 @@ export default function LoginPage() {
                   }}
                   disabled={loading}
                 >
-                  <svg className="mr-2 h-5 w-5" viewBox="0 0 24 24">
+                  <svg className="mr-2 h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24">
                     <path
                       fill="#4285F4"
                       d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -144,7 +144,7 @@ export default function LoginPage() {
                   </Link>
                 </div>
 
-                <Button type="submit" className="w-full bg-accent hover:bg-accent/90" disabled={loading}>
+                <Button type="submit" className="w-full bg-accent hover:bg-accent/90 text-sm sm:text-base" disabled={loading}>
                   {loading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

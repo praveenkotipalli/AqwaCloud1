@@ -340,43 +340,44 @@ function DashboardContent() {
       {!loading && isAuthenticated && (
       <>
       {/* Navigation */}
-      <nav className="fixed top-0 w-full z-50 px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
+      <nav className="fixed top-0 w-full z-50 px-4 sm:px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <button onClick={handleLogoClick} className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
-            <Image src="/images/aqwa-logo.jpg" alt="AqwaCloud Logo" width={32} height={32} className="rounded-lg" />
-            <span className="text-xl font-bold gradient-text">AqwaCloud</span>
+          <button onClick={handleLogoClick} className="flex items-center space-x-2 sm:space-x-3 hover:opacity-80 transition-opacity">
+            <Image src="/images/aqwa-logo.jpg" alt="AqwaCloud Logo" width={28} height={28} className="rounded-lg sm:w-8 sm:h-8" />
+            <span className="text-lg sm:text-xl font-bold gradient-text">AqwaCloud</span>
           </button>
 
-          <div className="flex items-center space-x-4">
-            <Badge variant="secondary">Dashboard</Badge>
-            <Button size="sm" className="bg-accent hover:bg-accent/90" asChild>
+          <div className="flex items-center space-x-2 sm:space-x-4">
+            <Badge variant="secondary" className="hidden sm:inline-flex">Dashboard</Badge>
+            <Button size="sm" className="bg-accent hover:bg-accent/90 hidden sm:flex" asChild>
               <Link href="/transfer">
                 <Plus className="h-4 w-4 mr-2" />
-                New Transfer
+                <span className="hidden md:inline">New Transfer</span>
               </Link>
             </Button>
-            <Button size="sm" variant="outline" onClick={() => logout()}>
-              <LogOut className="h-4 w-4 mr-2" />
-              Sign Out
+            <Button size="sm" variant="outline" onClick={() => logout()} className="text-xs sm:text-sm">
+              <LogOut className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">Sign Out</span>
+              <span className="sm:hidden">Out</span>
             </Button>
             <CountryFlag />
           </div>
         </div>
       </nav>
 
-      <div className="pt-24 pb-12 px-6">
+      <div className="pt-20 sm:pt-24 pb-12 px-4 sm:px-6">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
-          <div className="mb-8">
+          <div className="mb-6 sm:mb-8">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8 }}>
-              <h1 className="text-4xl font-bold mb-2">Welcome back, {user?.name}!</h1>
-              <p className="text-xl text-muted-foreground">Here's what's happening with your file transfers</p>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-2">Welcome back, {user?.name}!</h1>
+              <p className="text-base sm:text-lg lg:text-xl text-muted-foreground">Here's what's happening with your file transfers</p>
             </motion.div>
           </div>
 
           {/* Quick Stats */}
-          <section className="mb-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <section className="mb-6 sm:mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
               {quickStats.map((stat, index) => (
                 <motion.div
                   key={index}
@@ -399,9 +400,9 @@ function DashboardContent() {
             </div>
           </section>
 
-          <div className="grid lg:grid-cols-3 gap-8">
+          <div className="grid lg:grid-cols-3 gap-6 sm:gap-8">
             {/* Main Content */}
-            <div className="lg:col-span-2 space-y-8">
+            <div className="lg:col-span-2 space-y-6 sm:space-y-8">
               {/* Quick Actions */}
               <Card>
                 <CardHeader>
@@ -412,23 +413,23 @@ function DashboardContent() {
                   <CardDescription>Get started with common tasks</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <Button className="h-auto p-6 bg-accent hover:bg-accent/90" asChild>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Button className="h-auto p-4 sm:p-6 bg-accent hover:bg-accent/90" asChild>
                       <Link href="/transfer" className="flex flex-col items-center space-y-2">
-                        <Plus className="h-8 w-8" />
+                        <Plus className="h-6 w-6 sm:h-8 sm:w-8" />
                         <div className="text-center">
-                          <div className="font-semibold">Start New Transfer</div>
-                          <div className="text-sm opacity-90">Move files between cloud services</div>
+                          <div className="font-semibold text-sm sm:text-base">Start New Transfer</div>
+                          <div className="text-xs sm:text-sm opacity-90">Move files between cloud services</div>
                         </div>
                       </Link>
                     </Button>
 
-                    <Button variant="outline" className="h-auto p-6 bg-transparent" asChild>
+                    <Button variant="outline" className="h-auto p-4 sm:p-6 bg-transparent" asChild>
                       <Link href="/billing" className="flex flex-col items-center space-y-2">
-                        <CreditCard className="h-8 w-8" />
+                        <CreditCard className="h-6 w-6 sm:h-8 sm:w-8" />
                         <div className="text-center">
-                          <div className="font-semibold">View Billing</div>
-                          <div className="text-sm text-muted-foreground">Check usage and costs</div>
+                          <div className="font-semibold text-sm sm:text-base">View Billing</div>
+                          <div className="text-xs sm:text-sm text-muted-foreground">Check usage and costs</div>
                         </div>
                       </Link>
                     </Button>
@@ -463,30 +464,30 @@ function DashboardContent() {
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ duration: 0.5, delay: index * 0.1 }}
-                        className="flex items-center justify-between p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-colors"
+                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-colors space-y-3 sm:space-y-0"
                       >
-                        <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-3 sm:space-x-4 w-full sm:w-auto">
                           <div className="flex items-center space-x-2">
-                            <div className="text-2xl">{transfer.fromIcon}</div>
-                            <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
-                            <div className="text-2xl">{transfer.toIcon}</div>
+                            <div className="text-xl sm:text-2xl">{transfer.fromIcon}</div>
+                            <ArrowRightLeft className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
+                            <div className="text-xl sm:text-2xl">{transfer.toIcon}</div>
                           </div>
-                          <div>
-                            <div className="font-medium">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-sm sm:text-base truncate">
                               {transfer.from} → {transfer.to}
                             </div>
-                            <div className="text-sm text-muted-foreground">
+                            <div className="text-xs sm:text-sm text-muted-foreground">
                               {transfer.date} • {transfer.size}
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 self-end sm:self-auto">
                           {transfer.status === "completed" ? (
-                            <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
+                            <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200 text-xs">
                               Completed
                             </Badge>
                           ) : (
-                            <Badge variant="destructive">Failed</Badge>
+                            <Badge variant="destructive" className="text-xs">Failed</Badge>
                           )}
                         </div>
                       </motion.div>
@@ -497,7 +498,7 @@ function DashboardContent() {
             </div>
 
             {/* Sidebar */}
-            <div className="space-y-6">
+            <div className="space-y-4 sm:space-y-6">
               {/* Connected Services */}
               <Card>
                 <CardHeader>
@@ -563,13 +564,13 @@ function DashboardContent() {
                       </div>
                     </div>
                     <div className="pt-4 border-t border-border">
-                      <div className="grid grid-cols-2 gap-4 text-center">
+                      <div className="grid grid-cols-2 gap-3 sm:gap-4 text-center">
                         <div>
-                          <div className="text-2xl font-bold gradient-text">{currentUsage.transfersThisMonth}</div>
+                          <div className="text-lg sm:text-2xl font-bold gradient-text">{currentUsage.transfersThisMonth}</div>
                           <div className="text-xs text-muted-foreground">Transfers</div>
                         </div>
                         <div>
-                          <div className="text-2xl font-bold gradient-text">{formatCost(monthCostReal)}</div>
+                          <div className="text-lg sm:text-2xl font-bold gradient-text">{formatCost(monthCostReal)}</div>
                           <div className="text-xs text-muted-foreground">This Month Cost</div>
                         </div>
                       </div>
