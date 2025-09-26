@@ -38,6 +38,9 @@ import {
 import { motion } from "framer-motion"
 import Link from "next/link"
 import { useAuth } from "@/hooks/use-auth"
+import { auth, db } from "@/lib/firebase"
+import { GoogleAuthProvider, reauthenticateWithPopup, deleteUser as firebaseDeleteUser } from "firebase/auth"
+import { collection, deleteDoc, doc, getDocs, limit as fsLimit, query } from "firebase/firestore"
 
 export default function SettingsPage() {
   const { isAuthenticated, user, loading } = useAuth()
@@ -46,6 +49,8 @@ export default function SettingsPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [deleteConfirmText, setDeleteConfirmText] = useState("")
+  const [deleting, setDeleting] = useState(false)
   const [successMessage, setSuccessMessage] = useState("")
   const [errorMessage, setErrorMessage] = useState("")
 
@@ -143,13 +148,78 @@ export default function SettingsPage() {
     setTimeout(() => setSuccessMessage(""), 3000)
   }
 
-  const handleDeleteAccount = () => {
-    // Simulate account deletion
-    setTimeout(() => {
-      setSuccessMessage("Account deletion request submitted. You will receive a confirmation email.")
+  const handleDeleteAccount = async () => {
+    if (!user?.id) {
+      setErrorMessage("No user is logged in")
+      setTimeout(() => setErrorMessage(""), 3000)
+      return
+    }
+
+    if (deleteConfirmText !== "DELETE") {
+      setErrorMessage("Type DELETE to confirm")
+      setTimeout(() => setErrorMessage(""), 3000)
+      return
+    }
+
+    setDeleting(true)
+    try {
+      const userId = user.id
+
+      // 1) Delete Firestore subcollections we use
+      const deleteCollectionBatch = async (colPath: string, batchSize = 100) => {
+        const colRef = collection(db, colPath)
+        while (true) {
+          const snap = await getDocs(query(colRef, fsLimit(batchSize)))
+          if (snap.empty) break
+          await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))
+          if (snap.size < batchSize) break
+        }
+      }
+
+      // Known paths used by the app
+      await deleteCollectionBatch(`users/${userId}/transferHistory`)
+      await deleteCollectionBatch(`users/${userId}/metrics`)
+
+      // Delete the root user document if it exists
+      try {
+        await deleteDoc(doc(db, "users", userId))
+      } catch (e) {
+        // ignore if missing
+      }
+
+      // 2) Delete Firebase Auth user
+      if (auth.currentUser) {
+        try {
+          await firebaseDeleteUser(auth.currentUser)
+        } catch (err: any) {
+          if (err?.code === "auth/requires-recent-login") {
+            // Reauthenticate quickly (no email confirmation)
+            try {
+              const provider = new GoogleAuthProvider()
+              await reauthenticateWithPopup(auth.currentUser, provider)
+              await firebaseDeleteUser(auth.currentUser)
+            } catch (reauthErr) {
+              throw reauthErr
+            }
+          } else {
+            throw err
+          }
+        }
+      }
+
       setShowDeleteDialog(false)
-      setTimeout(() => setSuccessMessage(""), 5000)
-    }, 1000)
+      setDeleteConfirmText("")
+      setSuccessMessage("Your account and data have been permanently deleted")
+      setTimeout(() => setSuccessMessage(""), 4000)
+      // Navigate away after a brief moment
+      setTimeout(() => router.replace("/"), 500)
+    } catch (error: any) {
+      console.error("Account deletion failed:", error)
+      setErrorMessage(error?.message || "Failed to delete account")
+      setTimeout(() => setErrorMessage(""), 4000)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   const tabs = [
@@ -656,13 +726,17 @@ export default function SettingsPage() {
                             <p className="text-sm text-muted-foreground">
                               To confirm deletion, please type <strong>DELETE</strong> in the field below:
                             </p>
-                            <Input placeholder="Type DELETE to confirm" />
+                            <Input 
+                              placeholder="Type DELETE to confirm" 
+                              value={deleteConfirmText}
+                              onChange={(e) => setDeleteConfirmText(e.target.value)}
+                            />
                             <div className="flex justify-end space-x-2">
                               <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
                                 Cancel
                               </Button>
-                              <Button variant="destructive" onClick={handleDeleteAccount}>
-                                Delete Account
+                              <Button variant="destructive" onClick={handleDeleteAccount} disabled={deleting}>
+                                {deleting ? "Deleting..." : "Delete Account"}
                               </Button>
                             </div>
                           </div>

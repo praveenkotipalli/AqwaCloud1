@@ -33,12 +33,49 @@ export default function BillingPage() {
   const router = useRouter()
   const [loadingPortal, setLoadingPortal] = useState(false)
   const [loadingTopUp, setLoadingTopUp] = useState<string | null>(null)
+  const [paymentMethods, setPaymentMethods] = useState<Array<{ id: string; brand?: string; last4?: string; exp_month?: number; exp_year?: number; isDefault?: boolean }>>([])
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
       router.push("/login")
     }
   }, [isAuthenticated, loading, router])
+
+  // Refresh payment methods when returning from Stripe portal
+  const fetchPaymentMethods = async () => {
+    try {
+      const u = auth.currentUser
+      if (!u) return
+      const token = await u.getIdToken()
+      const resp = await fetch('/api/stripe/payment-methods', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        setPaymentMethods(data.paymentMethods || [])
+      } else {
+        console.warn('Fetch payment methods failed:', resp.status)
+      }
+    } catch (e) {
+      console.warn('Fetch payment methods error:', e)
+    }
+  }
+
+  useEffect(() => {
+    fetchPaymentMethods()
+    const onFocus = () => fetchPaymentMethods()
+    const onVisibility = () => { if (document.visibilityState === 'visible') fetchPaymentMethods() }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus)
+      document.addEventListener('visibilitychange', onVisibility)
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onFocus)
+        document.removeEventListener('visibilitychange', onVisibility)
+      }
+    }
+  }, [])
 
   if (loading) {
     return (
@@ -344,18 +381,31 @@ export default function BillingPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-border/50">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-6 bg-gradient-to-r from-blue-500 to-blue-600 rounded flex items-center justify-center">
-                        <span className="text-xs text-white font-bold">VISA</span>
+                  {paymentMethods.length === 0 ? (
+                    <div className="p-3 rounded-lg border border-border/50 bg-muted/30">
+                      <div className="text-sm text-muted-foreground">
+                        No payment method on file yet.
                       </div>
-                      <div>
-                        <div className="font-medium">•••• 4242</div>
-                        <div className="text-sm text-muted-foreground">Expires 12/26</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Use Manage Billing to add a card in the Stripe portal.
                       </div>
                     </div>
-                    <Badge variant="secondary">Default</Badge>
-                  </div>
+                  ) : (
+                    paymentMethods.map(pm => (
+                      <div key={pm.id} className="flex items-center justify-between p-3 rounded-lg border border-border/50">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-6 bg-gradient-to-r from-blue-500 to-blue-600 rounded flex items-center justify-center">
+                            <span className="text-xs text-white font-bold">{(pm.brand || 'CARD').toUpperCase()}</span>
+                          </div>
+                          <div>
+                            <div className="font-medium">•••• {pm.last4}</div>
+                            <div className="text-sm text-muted-foreground">Expires {pm.exp_month?.toString().padStart(2,'0')}/{pm.exp_year}</div>
+                          </div>
+                        </div>
+                        {pm.isDefault && <Badge variant="secondary">Default</Badge>}
+                      </div>
+                    ))
+                  )}
 
                   <Button 
                     variant="outline" 
@@ -365,6 +415,14 @@ export default function BillingPage() {
                   >
                     <Settings className="h-4 w-4 mr-2" />
                     {loadingPortal ? "Opening..." : "Manage Billing"}
+                  </Button>
+
+                  <Button 
+                    variant="outline" 
+                    className="w-full bg-transparent"
+                    onClick={fetchPaymentMethods}
+                  >
+                    Refresh Payment Methods
                   </Button>
                 </CardContent>
               </Card>

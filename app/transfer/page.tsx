@@ -130,7 +130,8 @@ export default function TransferPage() {
   const [enableRealTime, setEnableRealTime] = useState(true)
   const [realTimeStats, setRealTimeStats] = useState<any>(null)
   const [transferEstimate, setTransferEstimate] = useState<TransferEstimate | null>(null)
-  const [bandwidthMBps, setBandwidthMBps] = useState(5)
+  // Bandwidth UI removed; use fixed default for estimates
+  const defaultBandwidthMBps = 5
 
   const [transferQueue, setTransferQueue] = useState<QueuedTransfer[]>([])
   const [showQueue, setShowQueue] = useState(false)
@@ -183,7 +184,7 @@ export default function TransferPage() {
       estimatedFileSizes,
       sourceConnection.provider as 'google' | 'microsoft',
       destConnection.provider as 'google' | 'microsoft',
-      bandwidthMBps
+      defaultBandwidthMBps
     )
 
     setTransferEstimate(estimate)
@@ -192,7 +193,7 @@ export default function TransferPage() {
   // Update estimate when files or services change
   useEffect(() => {
     calculateTransferEstimate()
-  }, [selectedSourceFiles, sourceService, destinationService, bandwidthMBps])
+  }, [selectedSourceFiles, sourceService, destinationService])
 
   // Handle file selection from source
   const handleSourceFileSelect = (files: FileItem[]) => {
@@ -604,33 +605,7 @@ export default function TransferPage() {
                 </div>
               )}
 
-              {/* Bandwidth Settings */}
-              <div className="border-t border-white/10 pt-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-lg font-semibold text-white">Bandwidth Settings</h4>
-                  <div className="text-sm text-slate-400">
-                    Current: {bandwidthMBps} MB/s ({BandwidthCalculator.getBandwidthTier(bandwidthMBps)})
-                  </div>
-                </div>
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-4">
-                    <Label htmlFor="bandwidth" className="text-white text-sm">Connection Speed (MB/s):</Label>
-                    <Input
-                      id="bandwidth"
-                      type="number"
-                      min="0.1"
-                      max="100"
-                      step="0.1"
-                      value={bandwidthMBps}
-                      onChange={(e) => setBandwidthMBps(parseFloat(e.target.value) || 5)}
-                      className="w-24 bg-white/10 border-white/20 text-white"
-                    />
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    Adjust this based on your internet connection speed for more accurate estimates
-                  </div>
-                </div>
-              </div>
+              {/* Bandwidth Settings removed */}
 
               {/* Real-Time Transfer Options */}
               <div className="border-t border-white/10 pt-4">
@@ -914,7 +889,7 @@ export default function TransferPage() {
                       jobFileSizes,
                       mapServiceToProvider(job.sourceService),
                       mapServiceToProvider(job.destinationService),
-                      bandwidthMBps
+                      defaultBandwidthMBps
                     )
 
                     return (
@@ -1087,7 +1062,7 @@ export default function TransferPage() {
                         queueFileSizes,
                         mapServiceToProvider(transfer.sourceService),
                         mapServiceToProvider(transfer.destinationService),
-                        bandwidthMBps
+                        defaultBandwidthMBps
                       )
 
                       return (

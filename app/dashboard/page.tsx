@@ -553,7 +553,7 @@ function DashboardContent() {
                       <div className="flex justify-between text-sm mb-2">
                         <span>Data Transfer</span>
                         <span>
-                          {currentUsage.storageUsed} GB / {usageLimit} GB
+                          {currentUsage.storageUsed} GB
                         </span>
                       </div>
                       <div className="w-full bg-muted rounded-full h-2">
