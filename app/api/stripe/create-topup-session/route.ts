@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
     const adminDb = getAdminDb()
     const userSnap = await adminDb.collection('users').doc(userId).get()
     let stripeCustomerId: string | undefined = userSnap.exists ? (userSnap.data() as any)?.stripeCustomerId : undefined
+    console.log('[topup] userId:', userId, 'existing stripeCustomerId:', stripeCustomerId)
     if (!stripeCustomerId && email) {
       const existing = await stripe.customers.list({ email, limit: 1 })
       if (existing.data.length > 0) {
@@ -34,12 +35,12 @@ export async function POST(request: NextRequest) {
       stripeCustomerId = customer.id
       await adminDb.collection('users').doc(userId).set({ stripeCustomerId, email, name, updatedAt: new Date() }, { merge: true })
     }
+    console.log('[topup] using stripeCustomerId:', stripeCustomerId)
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: ['card'],
       customer: stripeCustomerId,
-      payment_method_collection: 'if_required',
       line_items: [
         {
           price_data: {
@@ -57,7 +58,6 @@ export async function POST(request: NextRequest) {
         userId
       },
       payment_intent_data: {
-        customer: stripeCustomerId,
         metadata: {
           purpose: 'wallet_topup',
           userId
@@ -67,7 +67,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ url: session.url })
   } catch (err: any) {
-    console.error('create-topup-session error', err)
-    return NextResponse.json({ error: 'Failed to create top-up session' }, { status: 500 })
+    const message = err?.message || (err?.raw && err.raw.message) || 'Failed to create top-up session'
+    console.error('create-topup-session error:', message, err)
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
