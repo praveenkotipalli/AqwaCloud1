@@ -47,6 +47,11 @@ export default function BillingPage() {
       const u = auth.currentUser
       if (!u) return
       const token = await u.getIdToken()
+      // Ensure we have a Stripe customer and persist its ID to the user profile
+      await fetch('/api/stripe/ensure-customer', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
       const resp = await fetch('/api/stripe/payment-methods', {
         headers: { 'Authorization': `Bearer ${token}` }
       })

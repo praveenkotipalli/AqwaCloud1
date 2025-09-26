@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
+import { getAdminDb } from '@/lib/firebase-admin'
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,16 +12,31 @@ export async function GET(request: NextRequest) {
     const token = authHeader.split('Bearer ')[1]
     const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
     const email = payload.email as string | undefined
+    const userId = payload.user_id as string | undefined
+
+    // If client provided explicit customerId, prefer it
+    const { searchParams } = new URL(request.url)
+    const customerIdParam = searchParams.get('customerId') || undefined
 
     if (!email) {
       return NextResponse.json({ error: 'Email missing in token' }, { status: 400 })
     }
 
-    // Find or create a customer by email
-    let customerId: string | undefined
-    const existing = await stripe.customers.list({ email, limit: 1 })
-    if (existing.data.length > 0) {
-      customerId = existing.data[0].id
+    // Resolve customer ID (prefer stored mapping via Admin; fallback to email lookup)
+    let customerId: string | undefined = customerIdParam
+    if (!customerId && userId) {
+      const snap = await getAdminDb().collection('users').doc(userId).get()
+      const profile = snap.exists ? (snap.data() as any) : null
+      if (profile?.stripeCustomerId) {
+        customerId = profile.stripeCustomerId
+      }
+    }
+
+    if (!customerId && email) {
+      const existing = await stripe.customers.list({ email, limit: 1 })
+      if (existing.data.length > 0) {
+        customerId = existing.data[0].id
+      }
     }
 
     if (!customerId) {

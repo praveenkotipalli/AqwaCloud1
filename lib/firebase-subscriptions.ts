@@ -302,6 +302,26 @@ export async function createUserProfile(
   }
 }
 
+// Ensure root users/{userId} document exists to avoid update failures on missing parent
+export async function ensureUserRootDoc(userId: string, initialData?: Partial<{ email: string; name: string; plan: string }>): Promise<void> {
+  try {
+    const userRef = doc(db, USERS_COLLECTION, userId)
+    const snap = await getDoc(userRef)
+    if (!snap.exists()) {
+      await setDoc(userRef, {
+        email: initialData?.email || '',
+        name: initialData?.name || '',
+        plan: initialData?.plan || 'free',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      })
+    }
+  } catch (error) {
+    console.error('Error ensuring root user doc:', error)
+    throw error
+  }
+}
+
 export async function updateUserProfile(
   userId: string,
   updates: {
@@ -384,14 +404,14 @@ export async function canUserTransfer(
           reason: `Transfer would exceed your free tier limit of ${freePlan.dataLimit} GB per month`,
           upgradeRequired: true,
           currentUsage,
-          subscription: null
+          subscription: undefined
         }
       }
       
       return {
         canTransfer: true,
         currentUsage,
-        subscription: null
+        subscription: undefined
       }
     }
 
@@ -401,7 +421,7 @@ export async function canUserTransfer(
       return {
         canTransfer: false,
         reason: 'Invalid subscription plan',
-        currentUsage: usage,
+        currentUsage: usage || undefined,
         subscription
       }
     }
