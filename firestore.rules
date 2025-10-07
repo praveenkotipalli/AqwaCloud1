@@ -90,5 +90,10 @@ service cloud.firestore {
       allow create: if request.auth != null && 
         request.auth.uid == request.resource.data.userId;
     }
+    
+    // Processed sessions - only server-side access (for webhook idempotency)
+    match /processedSessions/{sessionId} {
+      allow read, write: if false; // Only server-side access via Firebase Admin SDK
+    }
   }
 }

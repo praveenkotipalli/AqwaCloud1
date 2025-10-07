@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { db, auth } from "@/lib/firebase"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -32,16 +32,35 @@ export default function BillingPage() {
   const { subscription, usage, currentPlan, refreshSubscription } = useSubscription()
   const { balance, balanceDollars, isLoading: walletLoading, error: walletError, topUp, formatBalance, refreshBalance } = useWallet()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [loadingPortal, setLoadingPortal] = useState(false)
   const [loadingTopUp, setLoadingTopUp] = useState<string | null>(null)
   const [paymentMethods, setPaymentMethods] = useState<Array<{ id: string; brand?: string; last4?: string; exp_month?: number; exp_year?: number; isDefault?: boolean }>>([])
   const [fireHistory, setFireHistory] = useState<Array<{ id: string; timestamp: number; fromService: string; toService: string; totalBytes: number; costUsd: number; status: string }>>([])
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false)
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
       router.push("/login")
     }
   }, [isAuthenticated, loading, router])
+
+  // Handle success redirect from Stripe
+  useEffect(() => {
+    const status = searchParams.get('status')
+    if (status === 'success') {
+      setShowSuccessMessage(true)
+      // Refresh wallet balance and subscription data with error handling
+      try {
+        refreshBalance()
+        refreshSubscription()
+      } catch (error) {
+        console.error('Error refreshing data after payment:', error)
+      }
+      // Hide success message after 5 seconds
+      setTimeout(() => setShowSuccessMessage(false), 5000)
+    }
+  }, [searchParams, refreshBalance, refreshSubscription])
 
   // Refresh payment methods when returning from Stripe portal
   const fetchPaymentMethods = async () => {
@@ -241,6 +260,13 @@ export default function BillingPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Success Message */}
+      {showSuccessMessage && (
+        <div className="bg-green-500/10 border border-green-500/20 text-green-400 px-4 py-3 text-center">
+          <p className="text-sm font-medium">✅ Payment successful! Your wallet has been topped up and you've been upgraded to Pro tier.</p>
+        </div>
+      )}
+
       {/* Navigation */}
       <nav className="fixed top-0 w-full z-50 px-6 py-4 bg-background/80 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -474,8 +500,14 @@ export default function BillingPage() {
                     </div>
                   ) : walletError ? (
                     <div className="text-center py-4">
-                      <p className="text-sm text-destructive">{walletError}</p>
-                      <Button variant="outline" size="sm" onClick={refreshBalance} className="mt-2">
+                      <p className="text-sm text-destructive">Error loading wallet: {walletError}</p>
+                      <Button variant="outline" size="sm" onClick={() => {
+                        try {
+                          refreshBalance()
+                        } catch (error) {
+                          console.error('Error refreshing balance:', error)
+                        }
+                      }} className="mt-2">
                         Retry
                       </Button>
                     </div>

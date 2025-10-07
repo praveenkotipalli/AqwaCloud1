@@ -47,6 +47,7 @@ import { useAuth } from "@/hooks/use-auth"
 import { useSubscription } from "@/hooks/use-subscription"
 import { useRouter } from "next/navigation"
 import { useCloudConnections, FileItem } from "@/hooks/use-cloud-connections"
+import { auth } from "@/lib/firebase"
 import { GoogleDriveExplorer } from "@/components/google-drive-explorer"
 import { OneDriveExplorer } from "@/components/onedrive-explorer"
 import { BandwidthCalculator, TransferEstimate } from "@/lib/bandwidth-calculator"
@@ -214,7 +215,77 @@ export default function TransferPage() {
       return
     }
 
+    // Calculate total size and cost
+    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+    const totalGB = totalBytes / (1024 * 1024 * 1024)
+    const costCents = estimateTransferCost(totalBytes)
+    const isFreeTier = currentPlan?.id === 'free'
+    const isProTier = currentPlan?.id === 'pro'
+    const currentUsageGB = usage?.dataTransferred || 0
+
+    // Tier-based validation
+    if (isFreeTier) {
+      // Free tier: Check 1GB monthly limit
+      if (currentUsageGB + totalGB > 1) {
+        alert(`Free tier limit exceeded! You've used ${currentUsageGB.toFixed(2)}GB of your 1GB monthly limit. Top up your wallet to upgrade to Pro tier.`)
+        return
+      }
+      console.log(`Free tier transfer allowed: ${currentUsageGB.toFixed(2)}GB used, ${totalGB.toFixed(2)}GB to transfer`)
+    } else if (isProTier) {
+      // Pro tier: Check wallet balance
+      if (balance === 0) {
+        alert("No wallet credits available. Please top up your wallet to start transferring.")
+        return
+      }
+      if (!canAffordTransfer(totalBytes)) {
+        alert(`Insufficient wallet balance. You need $${(costCents / 100).toFixed(2)} but only have ${formatBalance()}. Please top up your wallet.`)
+        return
+      }
+      console.log(`Pro tier transfer allowed: ${formatBalance()} available, $${(costCents / 100).toFixed(2)} required`)
+    } else {
+      alert("Unknown tier status. Please refresh the page and try again.")
+      return
+    }
+
     try {
+      // For free tier: Record usage only (no wallet deduction)
+      // For pro tier: Deduct wallet credits
+      if (isFreeTier) {
+        await recordTransfer(totalBytes)
+        console.log(`Free tier: Recorded ${totalGB.toFixed(2)}GB transfer usage`)
+      } else if (isProTier) {
+        // Deduct wallet credits for pro tier
+        const firebaseUser = auth.currentUser
+        if (!firebaseUser) {
+          throw new Error('No Firebase user found')
+        }
+        
+        const token = await firebaseUser.getIdToken()
+        if (!token) {
+          throw new Error('Failed to get auth token')
+        }
+        
+        const response = await fetch('/api/wallet/debit', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ 
+            amountCents: costCents,
+            description: `Transfer: ${selectedSourceFiles.length} files (${totalGB.toFixed(2)}GB)`
+          })
+        })
+        
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || 'Failed to deduct wallet credits')
+        }
+        
+        await refreshBalance() // Refresh wallet balance after deduction
+        console.log(`Pro tier: Deducted $${(costCents / 100).toFixed(2)} from wallet`)
+      }
+
       const jobId = enableRealTime 
         ? await startRealTimeTransfer(
             sourceService,
@@ -248,7 +319,8 @@ export default function TransferPage() {
       setSelectedSourceFiles([])
       setSelectionSide(null)
 
-      console.log(`${enableRealTime ? 'Real-time' : 'Standard'} transfer started with job ID: ${jobId}`)
+      const tierMessage = isFreeTier ? "Free tier" : "Pro tier"
+      console.log(`${tierMessage} ${enableRealTime ? 'real-time' : 'standard'} transfer started with job ID: ${jobId}`)
     } catch (error) {
       console.error("Failed to start transfer:", error)
       alert("Failed to start transfer")
@@ -264,29 +336,33 @@ export default function TransferPage() {
 
     // Calculate total size and cost
     const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+    const totalGB = totalBytes / (1024 * 1024 * 1024)
     const costCents = estimateTransferCost(totalBytes)
+    const isFreeTier = currentPlan?.id === 'free'
+    const isProTier = currentPlan?.id === 'pro'
+    const currentUsageGB = usage?.dataTransferred || 0
 
-    // Check if user can afford the transfer
-    if (!canAffordTransfer(totalBytes)) {
-      alert(`Insufficient wallet balance. You need $${(costCents / 100).toFixed(2)} but only have ${formatBalance()}. Please top up your wallet.`)
-      return
-    }
-
-    // Check subscription limits for free tier
-    try {
-      const transferCheck = await canTransfer(totalBytes)
-      if (!transferCheck.canTransfer) {
-        if (transferCheck.upgradeRequired) {
-          setShowUsageLimitModal(true)
-          return
-        } else {
-          alert(transferCheck.reason || "Transfer not allowed")
-          return
-        }
+    // Tier-based validation
+    if (isFreeTier) {
+      // Free tier: Check 1GB monthly limit
+      if (currentUsageGB + totalGB > 1) {
+        alert(`Free tier limit exceeded! You've used ${currentUsageGB.toFixed(2)}GB of your 1GB monthly limit. Top up your wallet to upgrade to Pro tier.`)
+        return
       }
-    } catch (error) {
-      console.error("Error checking transfer eligibility:", error)
-      alert("Error checking transfer eligibility")
+      console.log(`Free tier transfer allowed: ${currentUsageGB.toFixed(2)}GB used, ${totalGB.toFixed(2)}GB to transfer`)
+    } else if (isProTier) {
+      // Pro tier: Check wallet balance
+      if (balance === 0) {
+        alert("No wallet credits available. Please top up your wallet to start transferring.")
+        return
+      }
+      if (!canAffordTransfer(totalBytes)) {
+        alert(`Insufficient wallet balance. You need $${(costCents / 100).toFixed(2)} but only have ${formatBalance()}. Please top up your wallet.`)
+        return
+      }
+      console.log(`Pro tier transfer allowed: ${formatBalance()} available, $${(costCents / 100).toFixed(2)} required`)
+    } else {
+      alert("Unknown tier status. Please refresh the page and try again.")
       return
     }
 
@@ -299,9 +375,44 @@ export default function TransferPage() {
         return
       }
 
-      // Record the transfer and deduct credits
-      await recordTransfer(totalBytes)
-      await refreshBalance() // Refresh wallet balance after deduction
+      // For free tier: Record usage only (no wallet deduction)
+      // For pro tier: Deduct wallet credits
+      if (isFreeTier) {
+        await recordTransfer(totalBytes)
+        console.log(`Free tier: Recorded ${totalGB.toFixed(2)}GB transfer usage`)
+      } else if (isProTier) {
+        // Deduct wallet credits for pro tier
+        // Get Firebase auth token for API call
+        const firebaseUser = auth.currentUser
+        if (!firebaseUser) {
+          throw new Error('No Firebase user found')
+        }
+        
+        const token = await firebaseUser.getIdToken()
+        if (!token) {
+          throw new Error('Failed to get auth token')
+        }
+        
+        const response = await fetch('/api/wallet/debit', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ 
+            amountCents: costCents,
+            description: `Transfer: ${selectedSourceFiles.length} files (${totalGB.toFixed(2)}GB)`
+          })
+        })
+        
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || 'Failed to deduct wallet credits')
+        }
+        
+        await refreshBalance() // Refresh wallet balance after deduction
+        console.log(`Pro tier: Deducted $${(costCents / 100).toFixed(2)} from wallet`)
+      }
 
       // Start persistent transfer for each selected file
       for (const file of selectedSourceFiles) {
@@ -311,8 +422,9 @@ export default function TransferPage() {
       setSelectedSourceFiles([])
       setSelectionSide(null)
 
-      console.log(`Persistent transfer started for ${selectedSourceFiles.length} files`)
-      alert(`Persistent transfer started! Your files will continue transferring even if you log out.`)
+      const tierMessage = isFreeTier ? "Free tier transfer" : "Pro tier transfer"
+      console.log(`${tierMessage} started for ${selectedSourceFiles.length} files`)
+      alert(`${tierMessage} started! Your files will continue transferring even if you log out.`)
     } catch (error) {
       console.error("Failed to start persistent transfer:", error)
       alert("Failed to start persistent transfer")
@@ -779,63 +891,243 @@ export default function TransferPage() {
           </div>
         </div>
 
-        {/* Wallet Balance & Transfer Cost */}
+        {/* Tier Status & Transfer Eligibility */}
         {selectedSourceFiles.length > 0 && (
           <div className="mb-6">
             <Card className="bg-white/5 border-white/20">
-              <CardContent className="p-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                  <div className="flex items-center space-x-2">
-                    <DollarSign className="h-5 w-5 text-green-500" />
-                    <span className="text-sm font-medium">Wallet Balance:</span>
-                    <span className="text-lg font-bold text-green-500">{formatBalance()}</span>
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <DollarSign className="h-5 w-5" />
+                  Transfer Eligibility & Tier Status
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Current Tier Display */}
+                <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <span className="text-sm font-medium text-white">Current Tier:</span>
+                    <Badge 
+                      variant={currentPlan?.id === 'free' ? 'secondary' : 'default'} 
+                      className={currentPlan?.id === 'free' ? 'text-white border-white/30' : 'bg-green-500 text-white'}
+                    >
+                      {currentPlan?.name || 'Free'}
+                    </Badge>
+                    {currentPlan?.id === 'free' && (
+                      <span className="text-xs text-slate-400">
+                        (1GB monthly limit)
+                      </span>
+                    )}
+                    {currentPlan?.id === 'pro' && (
+                      <span className="text-xs text-green-400">
+                        (Wallet-based transfers)
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center space-x-2">
-                    <span className="text-sm font-medium">Transfer Size:</span>
+                    <DollarSign className="h-4 w-4 text-green-500" />
+                    <span className="text-sm font-medium text-white">Wallet:</span>
+                    <span className="text-lg font-bold text-green-500">{formatBalance()}</span>
+                  </div>
+                </div>
+
+                {/* Transfer Details */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="flex items-center space-x-2 p-3 bg-white/5 rounded-lg">
+                    <span className="text-sm font-medium text-white">Transfer Size:</span>
                     <span className="text-lg font-bold text-blue-500">
                       {formatDataSize(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0))}
                     </span>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm font-medium">Transfer Cost:</span>
+                  <div className="flex items-center space-x-2 p-3 bg-white/5 rounded-lg">
+                    <span className="text-sm font-medium text-white">Transfer Cost:</span>
                     <span className="text-lg font-bold text-orange-500">
                       ${(estimateTransferCost(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) / 100).toFixed(2)}
                     </span>
                   </div>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm font-medium">Current Tier:</span>
-                    <Badge variant="outline" className="text-white border-white/30">
-                      {currentPlan?.name || 'Free'}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {canAffordTransfer(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) ? (
-                      <Badge variant="default" className="bg-green-500">
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        Ready to Transfer
-                      </Badge>
-                    ) : (
-                      <Badge variant="destructive">
-                        <AlertCircle className="h-3 w-3 mr-1" />
-                        Insufficient Balance
-                      </Badge>
-                    )}
+                  <div className="flex items-center space-x-2 p-3 bg-white/5 rounded-lg">
+                    <span className="text-sm font-medium text-white">Monthly Usage:</span>
+                    <span className="text-lg font-bold text-purple-500">
+                      {usage ? formatDataSize(usage.dataTransferred * 1024 * 1024 * 1024) : '0 B'}
+                    </span>
                   </div>
                 </div>
-                
-                {!canAffordTransfer(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) && (
-                  <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                    <p className="text-sm text-red-400">
-                      You need to top up your wallet to complete this transfer. 
-                      <Link href="/billing" className="underline ml-1 hover:text-red-300">
-                        Add funds now
-                      </Link>
-                    </p>
-                  </div>
-                )}
+
+                {/* Transfer Eligibility Status */}
+                <div className="p-4 rounded-lg border">
+                  {(() => {
+                    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+                    const totalGB = totalBytes / (1024 * 1024 * 1024)
+                    const costCents = estimateTransferCost(totalBytes)
+                    const canAfford = canAffordTransfer(totalBytes)
+                    
+                    // Check free tier limits
+                    const isFreeTier = currentPlan?.id === 'free'
+                    const currentUsageGB = usage?.dataTransferred || 0
+                    const wouldExceedFreeLimit = isFreeTier && (currentUsageGB + totalGB) > 1
+                    
+                    // Check pro tier (wallet-based)
+                    const isProTier = currentPlan?.id === 'pro'
+                    const hasWalletCredits = balance > 0
+                    
+                    if (isFreeTier) {
+                      if (wouldExceedFreeLimit) {
+                        return (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <AlertCircle className="h-5 w-5 text-red-500" />
+                              <div>
+                                <p className="text-sm font-medium text-red-400">
+                                  Free tier limit exceeded
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  You've used {currentUsageGB.toFixed(2)}GB of 1GB monthly limit
+                                </p>
+                              </div>
+                            </div>
+                            <Badge variant="destructive">
+                              Upgrade Required
+                            </Badge>
+                          </div>
+                        )
+                      } else {
+                        return (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <CheckCircle className="h-5 w-5 text-green-500" />
+                              <div>
+                                <p className="text-sm font-medium text-green-400">
+                                  Free tier transfer allowed
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  {((1 - currentUsageGB) * 1024).toFixed(0)}MB remaining this month
+                                </p>
+                              </div>
+                            </div>
+                            <Badge variant="default" className="bg-green-500">
+                              Ready to Transfer
+                            </Badge>
+                          </div>
+                        )
+                      }
+                    } else if (isProTier) {
+                      if (!hasWalletCredits) {
+                        return (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <AlertCircle className="h-5 w-5 text-red-500" />
+                              <div>
+                                <p className="text-sm font-medium text-red-400">
+                                  No wallet credits available
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  Top up your wallet to start transferring
+                                </p>
+                              </div>
+                            </div>
+                            <Badge variant="destructive">
+                              Top Up Required
+                            </Badge>
+                          </div>
+                        )
+                      } else if (!canAfford) {
+                        return (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <AlertCircle className="h-5 w-5 text-red-500" />
+                              <div>
+                                <p className="text-sm font-medium text-red-400">
+                                  Insufficient wallet balance
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  Need ${(costCents / 100).toFixed(2)}, have {formatBalance()}
+                                </p>
+                              </div>
+                            </div>
+                            <Badge variant="destructive">
+                              Insufficient Balance
+                            </Badge>
+                          </div>
+                        )
+                      } else {
+                        return (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <CheckCircle className="h-5 w-5 text-green-500" />
+                              <div>
+                                <p className="text-sm font-medium text-green-400">
+                                  Pro tier transfer ready
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  Wallet balance sufficient for transfer
+                                </p>
+                              </div>
+                            </div>
+                            <Badge variant="default" className="bg-green-500">
+                              Ready to Transfer
+                            </Badge>
+                          </div>
+                        )
+                      }
+                    }
+                    
+                    return (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <AlertCircle className="h-5 w-5 text-yellow-500" />
+                          <div>
+                            <p className="text-sm font-medium text-yellow-400">
+                              Unknown tier status
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              Please refresh the page
+                            </p>
+                          </div>
+                        </div>
+                        <Badge variant="secondary">
+                          Check Status
+                        </Badge>
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {/* Action Required Messages */}
+                {(() => {
+                  const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+                  const totalGB = totalBytes / (1024 * 1024 * 1024)
+                  const costCents = estimateTransferCost(totalBytes)
+                  const canAfford = canAffordTransfer(totalBytes)
+                  const isFreeTier = currentPlan?.id === 'free'
+                  const currentUsageGB = usage?.dataTransferred || 0
+                  const wouldExceedFreeLimit = isFreeTier && (currentUsageGB + totalGB) > 1
+                  const isProTier = currentPlan?.id === 'pro'
+                  const hasWalletCredits = balance > 0
+                  
+                  if (isFreeTier && wouldExceedFreeLimit) {
+                    return (
+                      <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                        <p className="text-sm text-red-400">
+                          <strong>Free tier limit exceeded!</strong> You've used {currentUsageGB.toFixed(2)}GB of your 1GB monthly limit. 
+                          <Link href="/billing" className="underline ml-1 hover:text-red-300">
+                            Top up your wallet to upgrade to Pro tier
+                          </Link>
+                        </p>
+                      </div>
+                    )
+                  } else if (isProTier && (!hasWalletCredits || !canAfford)) {
+                    return (
+                      <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                        <p className="text-sm text-red-400">
+                          <strong>Wallet top-up required!</strong> You need ${(costCents / 100).toFixed(2)} to complete this transfer. 
+                          <Link href="/billing" className="underline ml-1 hover:text-red-300">
+                            Add funds to your wallet
+                          </Link>
+                        </p>
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </CardContent>
             </Card>
           </div>

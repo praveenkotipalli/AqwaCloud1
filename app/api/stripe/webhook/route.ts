@@ -96,7 +96,27 @@ async function handleCheckoutSessionCompleted(session: any) {
       
       if (userId && typeof amountCents === 'number' && amountCents > 0) {
         try {
-          await creditWalletAdmin(userId, amountCents, 'Stripe top-up')
+          // Check if this session has already been processed to prevent double crediting
+          const { getAdminDb } = await import('@/lib/firebase-admin')
+          const adminDb = getAdminDb()
+          const processedSessionsRef = adminDb.collection('processedSessions')
+          const sessionDoc = await processedSessionsRef.doc(session.id).get()
+          
+          if (sessionDoc.exists) {
+            console.log(`⚠️ Session ${session.id} already processed, skipping to prevent double crediting`)
+            return
+          }
+          
+          // Mark session as processed
+          await processedSessionsRef.doc(session.id).set({
+            sessionId: session.id,
+            userId,
+            amountCents,
+            processedAt: new Date(),
+            purpose: 'wallet_topup'
+          })
+          
+          await creditWalletAdmin(userId, amountCents, `Stripe top-up: ${session.id}`)
           
           // Auto-upgrade user to pro tier after first top-up
           const { updateUserProfile } = await import('@/lib/firebase-subscriptions')
