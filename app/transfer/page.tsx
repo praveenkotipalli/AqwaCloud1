@@ -58,6 +58,30 @@ import { PersistentTransfers } from "@/components/persistent-transfers"
 import { usePersistentTransfers } from "@/hooks/use-persistent-transfers"
 import { useWallet } from "@/hooks/use-wallet"
 
+// Helper function to parse file size string to bytes
+function parseFileSizeToBytes(sizeString?: string): number {
+  if (!sizeString) return 0
+  
+  // Remove any non-numeric characters except decimal point
+  const cleanSize = sizeString.replace(/[^\d.]/g, '')
+  const size = parseFloat(cleanSize)
+  
+  if (isNaN(size)) return 0
+  
+  // Determine unit and convert to bytes
+  if (sizeString.toLowerCase().includes('tb')) {
+    return size * 1024 * 1024 * 1024 * 1024
+  } else if (sizeString.toLowerCase().includes('gb')) {
+    return size * 1024 * 1024 * 1024
+  } else if (sizeString.toLowerCase().includes('mb')) {
+    return size * 1024 * 1024
+  } else if (sizeString.toLowerCase().includes('kb')) {
+    return size * 1024
+  } else {
+    return size // Assume bytes if no unit
+  }
+}
+
 interface TransferConfig {
   overwriteExisting: boolean
   preserveTimestamps: boolean
@@ -169,20 +193,14 @@ export default function TransferPage() {
       return
     }
 
-    // Estimate file sizes (in bytes) - this is a rough estimate
-    // In a real implementation, you'd get actual file sizes from the API
-    const estimatedFileSizes = selectedSourceFiles.map(file => {
-      // Rough estimation based on file type and name
+    // Use actual file sizes from the API
+    const actualFileSizes = selectedSourceFiles.map(file => {
       if (file.type === 'folder') return 0
-      if (file.name.endsWith('.jpg') || file.name.endsWith('.png')) return 2 * 1024 * 1024 // 2MB
-      if (file.name.endsWith('.pdf')) return 5 * 1024 * 1024 // 5MB
-      if (file.name.endsWith('.mp4')) return 50 * 1024 * 1024 // 50MB
-      if (file.name.endsWith('.docx')) return 1 * 1024 * 1024 // 1MB
-      return 2 * 1024 * 1024 // Default 2MB
+      return parseFileSizeToBytes(file.size)
     })
 
     const estimate = BandwidthCalculator.generateEstimate(
-      estimatedFileSizes,
+      actualFileSizes,
       sourceConnection.provider as 'google' | 'microsoft',
       destConnection.provider as 'google' | 'microsoft',
       defaultBandwidthMBps
@@ -216,7 +234,7 @@ export default function TransferPage() {
     }
 
     // Calculate total size and cost
-    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0)
     const totalGB = totalBytes / (1024 * 1024 * 1024)
     const costCents = estimateTransferCost(totalBytes)
     const isFreeTier = currentPlan?.id === 'free'
@@ -335,7 +353,7 @@ export default function TransferPage() {
     }
 
     // Calculate total size and cost
-    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0)
     const totalGB = totalBytes / (1024 * 1024 * 1024)
     const costCents = estimateTransferCost(totalBytes)
     const isFreeTier = currentPlan?.id === 'free'
@@ -459,6 +477,30 @@ export default function TransferPage() {
   const getSelectedServiceConnection = (serviceId: string) => {
     const connection = connections.find(conn => conn.id === serviceId)
     return connection
+  }
+
+  // Check if transfer is allowed based on tier and limits
+  const isTransferAllowed = () => {
+    if (!sourceService || !destinationService || selectedSourceFiles.length === 0) {
+      return false
+    }
+
+    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0)
+    const totalGB = totalBytes / (1024 * 1024 * 1024)
+    const costCents = estimateTransferCost(totalBytes)
+    const isFreeTier = currentPlan?.id === 'free'
+    const isProTier = currentPlan?.id === 'pro'
+    const currentUsageGB = usage?.dataTransferred || 0
+
+    if (isFreeTier) {
+      // Free tier: Check 1GB monthly limit
+      return currentUsageGB + totalGB <= 1
+    } else if (isProTier) {
+      // Pro tier: Check wallet balance
+      return balance > 0 && canAffordTransfer(totalBytes)
+    }
+
+    return false // Unknown tier
   }
 
 
@@ -935,13 +977,13 @@ export default function TransferPage() {
                   <div className="flex items-center space-x-2 p-3 bg-white/5 rounded-lg">
                     <span className="text-sm font-medium text-white">Transfer Size:</span>
                     <span className="text-lg font-bold text-blue-500">
-                      {formatDataSize(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0))}
+                      {formatDataSize(selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0))}
                     </span>
                   </div>
                   <div className="flex items-center space-x-2 p-3 bg-white/5 rounded-lg">
                     <span className="text-sm font-medium text-white">Transfer Cost:</span>
                     <span className="text-lg font-bold text-orange-500">
-                      ${(estimateTransferCost(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) / 100).toFixed(2)}
+                      ${(estimateTransferCost(selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0)) / 100).toFixed(2)}
                     </span>
                   </div>
                   <div className="flex items-center space-x-2 p-3 bg-white/5 rounded-lg">
@@ -955,7 +997,7 @@ export default function TransferPage() {
                 {/* Transfer Eligibility Status */}
                 <div className="p-4 rounded-lg border">
                   {(() => {
-                    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+                    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0)
                     const totalGB = totalBytes / (1024 * 1024 * 1024)
                     const costCents = estimateTransferCost(totalBytes)
                     const canAfford = canAffordTransfer(totalBytes)
@@ -1093,7 +1135,7 @@ export default function TransferPage() {
 
                 {/* Action Required Messages */}
                 {(() => {
-                  const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+                  const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0)
                   const totalGB = totalBytes / (1024 * 1024 * 1024)
                   const costCents = estimateTransferCost(totalBytes)
                   const canAfford = canAffordTransfer(totalBytes)
@@ -1137,9 +1179,9 @@ export default function TransferPage() {
         <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
           <Button
             onClick={handleStartTransfer}
-            disabled={!sourceService || !destinationService || selectedSourceFiles.length === 0}
+            disabled={!isTransferAllowed()}
             size="lg"
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 sm:px-8 text-sm sm:text-base"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 sm:px-8 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ArrowLeftRight className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
             <span className="hidden sm:inline">{enableRealTime ? 'Start Real-Time Transfer' : 'Start Transfer'}</span>
@@ -1148,9 +1190,9 @@ export default function TransferPage() {
 
           <Button
             onClick={handleStartPersistentTransfer}
-            disabled={!sourceService || !destinationService || selectedSourceFiles.length === 0}
+            disabled={!isTransferAllowed()}
             size="lg"
-            className="bg-green-600 hover:bg-green-700 text-white px-4 sm:px-8 text-sm sm:text-base"
+            className="bg-green-600 hover:bg-green-700 text-white px-4 sm:px-8 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
             <span className="hidden sm:inline">Start Persistent Transfer</span>
@@ -1170,6 +1212,35 @@ export default function TransferPage() {
               <span className="hidden sm:inline">Stop All Real-Time Sessions</span>
               <span className="sm:hidden">Stop All</span>
             </Button>
+          )}
+          
+          {/* Transfer Status Message */}
+          {selectedSourceFiles.length > 0 && !isTransferAllowed() && (
+            <div className="w-full mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-red-400" />
+                <div className="text-sm text-red-400">
+                  {(() => {
+                    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0)
+                    const totalGB = totalBytes / (1024 * 1024 * 1024)
+                    const costCents = estimateTransferCost(totalBytes)
+                    const isFreeTier = currentPlan?.id === 'free'
+                    const isProTier = currentPlan?.id === 'pro'
+                    const currentUsageGB = usage?.dataTransferred || 0
+
+                    if (isFreeTier && currentUsageGB + totalGB > 1) {
+                      return `Transfer blocked: You've used ${currentUsageGB.toFixed(2)}GB of your 1GB monthly limit. This transfer would add ${totalGB.toFixed(2)}GB more.`
+                    } else if (isProTier && balance === 0) {
+                      return "Transfer blocked: No wallet credits available. Please top up your wallet."
+                    } else if (isProTier && !canAffordTransfer(totalBytes)) {
+                      return `Transfer blocked: Insufficient wallet balance. You need $${(costCents / 100).toFixed(2)} but only have ${formatBalance()}.`
+                    } else {
+                      return "Transfer blocked: Please check your tier status and limits."
+                    }
+                  })()}
+                </div>
+              </div>
+            </div>
           )}
           
           {/* Debug: Show connection status */}
@@ -1206,13 +1277,8 @@ export default function TransferPage() {
                   {transferJobs.map((job) => {
                     // Calculate bandwidth and cost analysis for this specific job
                     const jobFileSizes = job.sourceFiles.map(file => {
-                      // Estimate file sizes based on file type and name
                       if (file.type === 'folder') return 0
-                      if (file.name.endsWith('.jpg') || file.name.endsWith('.png')) return 2 * 1024 * 1024 // 2MB
-                      if (file.name.endsWith('.pdf')) return 5 * 1024 * 1024 // 5MB
-                      if (file.name.endsWith('.mp4')) return 50 * 1024 * 1024 // 50MB
-                      if (file.name.endsWith('.docx')) return 1 * 1024 * 1024 // 1MB
-                      return 2 * 1024 * 1024 // Default 2MB
+                      return parseFileSizeToBytes(file.size)
                     })
 
                     // Map service names to provider types
@@ -1530,7 +1596,7 @@ export default function TransferPage() {
         onClose={() => setShowUsageLimitModal(false)}
         currentUsage={usage || { dataTransferred: 0, transferCount: 0 }}
         currentPlan={currentPlan}
-        transferSizeGB={bytesToGB(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0))}
+        transferSizeGB={bytesToGB(selectedSourceFiles.reduce((sum, file) => sum + parseFileSizeToBytes(file.size), 0))}
         onUpgrade={handleUpgrade}
         loadingUpgrade={loadingUpgrade}
       />
