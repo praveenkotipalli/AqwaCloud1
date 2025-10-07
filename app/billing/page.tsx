@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { db, auth } from "@/lib/firebase"
 import { Button } from "@/components/ui/button"
@@ -27,7 +27,7 @@ import { formatCurrency, formatDataSize } from "@/lib/subscription"
 import { getStripe } from "@/lib/stripe"
 import { collection, limit, onSnapshot, orderBy, query, Timestamp } from "firebase/firestore"
 
-export default function BillingPage() {
+function BillingContent() {
   const { isAuthenticated, user, loading } = useAuth()
   const { subscription, usage, currentPlan, refreshSubscription } = useSubscription()
   const { balance, balanceDollars, isLoading: walletLoading, error: walletError, topUp, formatBalance, refreshBalance } = useWallet()
@@ -628,5 +628,20 @@ export default function BillingPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-white">Loading billing information...</p>
+        </div>
+      </div>
+    }>
+      <BillingContent />
+    </Suspense>
   )
 }
