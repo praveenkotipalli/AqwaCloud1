@@ -113,7 +113,7 @@ export default function TransferPage() {
   const { startTransfer: startPersistentTransfer } = usePersistentTransfers()
 
   // Wallet hook
-  const { balance, formatBalance, estimateTransferCost, canAffordTransfer } = useWallet()
+  const { balance, formatBalance, estimateTransferCost, canAffordTransfer, refreshBalance } = useWallet()
 
   const [sourceService, setSourceService] = useState<string>("")
   const [destinationService, setDestinationService] = useState<string>("")
@@ -262,6 +262,34 @@ export default function TransferPage() {
       return
     }
 
+    // Calculate total size and cost
+    const totalBytes = selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)
+    const costCents = estimateTransferCost(totalBytes)
+
+    // Check if user can afford the transfer
+    if (!canAffordTransfer(totalBytes)) {
+      alert(`Insufficient wallet balance. You need $${(costCents / 100).toFixed(2)} but only have ${formatBalance()}. Please top up your wallet.`)
+      return
+    }
+
+    // Check subscription limits for free tier
+    try {
+      const transferCheck = await canTransfer(totalBytes)
+      if (!transferCheck.canTransfer) {
+        if (transferCheck.upgradeRequired) {
+          setShowUsageLimitModal(true)
+          return
+        } else {
+          alert(transferCheck.reason || "Transfer not allowed")
+          return
+        }
+      }
+    } catch (error) {
+      console.error("Error checking transfer eligibility:", error)
+      alert("Error checking transfer eligibility")
+      return
+    }
+
     try {
       const sourceConnection = getSelectedServiceConnection(sourceService)
       const destConnection = getSelectedServiceConnection(destinationService)
@@ -270,6 +298,10 @@ export default function TransferPage() {
         alert("Invalid connection selected")
         return
       }
+
+      // Record the transfer and deduct credits
+      await recordTransfer(totalBytes)
+      await refreshBalance() // Refresh wallet balance after deduction
 
       // Start persistent transfer for each selected file
       for (const file of selectedSourceFiles) {
@@ -752,26 +784,38 @@ export default function TransferPage() {
           <div className="mb-6">
             <Card className="bg-white/5 border-white/20">
               <CardContent className="p-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  <div className="flex items-center space-x-2">
+                    <DollarSign className="h-5 w-5 text-green-500" />
+                    <span className="text-sm font-medium">Wallet Balance:</span>
+                    <span className="text-lg font-bold text-green-500">{formatBalance()}</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Transfer Size:</span>
+                    <span className="text-lg font-bold text-blue-500">
+                      {formatDataSize(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0))}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Transfer Cost:</span>
+                    <span className="text-lg font-bold text-orange-500">
+                      ${(estimateTransferCost(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) / 100).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+                
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center space-x-2">
-                      <DollarSign className="h-5 w-5 text-green-500" />
-                      <span className="text-sm font-medium">Wallet Balance:</span>
-                      <span className="text-lg font-bold text-green-500">{formatBalance()}</span>
-                    </div>
-                    <Separator orientation="vertical" className="h-6" />
-                    <div className="flex items-center space-x-2">
-                      <span className="text-sm font-medium">Transfer Cost:</span>
-                      <span className="text-lg font-bold text-blue-500">
-                        ${(estimateTransferCost(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) / 100).toFixed(2)}
-                      </span>
-                    </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm font-medium">Current Tier:</span>
+                    <Badge variant="outline" className="text-white border-white/30">
+                      {currentPlan?.name || 'Free'}
+                    </Badge>
                   </div>
                   <div className="flex items-center space-x-2">
                     {canAffordTransfer(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) ? (
                       <Badge variant="default" className="bg-green-500">
                         <CheckCircle className="h-3 w-3 mr-1" />
-                        Sufficient Balance
+                        Ready to Transfer
                       </Badge>
                     ) : (
                       <Badge variant="destructive">
@@ -781,6 +825,7 @@ export default function TransferPage() {
                     )}
                   </div>
                 </div>
+                
                 {!canAffordTransfer(selectedSourceFiles.reduce((sum, file) => sum + (typeof file.size === 'number' ? file.size : 0), 0)) && (
                   <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
                     <p className="text-sm text-red-400">

@@ -97,7 +97,12 @@ async function handleCheckoutSessionCompleted(session: any) {
       if (userId && typeof amountCents === 'number' && amountCents > 0) {
         try {
           await creditWalletAdmin(userId, amountCents, 'Stripe top-up')
-          console.log(`✅ Wallet credited successfully for user ${userId}: ${amountCents} cents`)
+          
+          // Auto-upgrade user to pro tier after first top-up
+          const { updateUserProfile } = await import('@/lib/firebase-subscriptions')
+          await updateUserProfile(userId, { plan: 'pro' })
+          
+          console.log(`✅ Wallet credited successfully for user ${userId}: ${amountCents} cents and upgraded to pro tier`)
         } catch (e) {
           console.error('❌ Failed to credit wallet:', e)
           throw e // Re-throw to ensure webhook fails if wallet credit fails
