@@ -189,7 +189,7 @@ export default function TransferPage() {
   }
 
   const canStartTransfer = () => {
-    const hasConnectedServices = connections.filter(conn => conn.connected).length > 0
+    const hasConnectedServices = connections && connections.filter(conn => conn.connected).length > 0
     return hasConnectedServices && selectedSourceFiles.length > 0 && sourceService && destinationService && !isLoading
   }
 
@@ -287,7 +287,7 @@ export default function TransferPage() {
                           <SelectValue placeholder="Select source service" />
                         </SelectTrigger>
                         <SelectContent>
-                          {connections.filter(conn => conn.connected).length === 0 ? (
+                          {!connections || connections.filter(conn => conn.connected).length === 0 ? (
                             <SelectItem value="no-connections" disabled>
                               No cloud services connected
                             </SelectItem>
@@ -302,7 +302,7 @@ export default function TransferPage() {
                           )}
                         </SelectContent>
                       </Select>
-                      {connections.filter(conn => conn.connected).length === 0 && (
+                      {(!connections || connections.filter(conn => conn.connected).length === 0) && (
                         <p className="text-sm text-muted-foreground">
                           No cloud services connected. Please connect a service first.
                         </p>
@@ -315,7 +315,7 @@ export default function TransferPage() {
                           <SelectValue placeholder="Select destination service" />
                         </SelectTrigger>
                         <SelectContent>
-                          {connections.filter(conn => conn.connected).length === 0 ? (
+                          {!connections || connections.filter(conn => conn.connected).length === 0 ? (
                             <SelectItem value="no-connections" disabled>
                               No cloud services connected
                             </SelectItem>
@@ -330,7 +330,7 @@ export default function TransferPage() {
                           )}
                         </SelectContent>
                       </Select>
-                      {connections.filter(conn => conn.connected).length === 0 && (
+                      {(!connections || connections.filter(conn => conn.connected).length === 0) && (
                         <p className="text-sm text-muted-foreground">
                           No cloud services connected. Please connect a service first.
                         </p>
@@ -339,7 +339,7 @@ export default function TransferPage() {
                   </div>
                   
                   {/* Connection Status */}
-                  {connections.length > 0 && (
+                  {connections && connections.length > 0 && (
                     <div className="space-y-2">
                       <Label>Connection Status</Label>
                       <div className="grid grid-cols-2 gap-2">
@@ -367,7 +367,7 @@ export default function TransferPage() {
                   <CardDescription>Choose files to transfer from your selected services</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {connections.filter(conn => conn.connected).length === 0 ? (
+                  {!connections || connections.filter(conn => conn.connected).length === 0 ? (
                     <div className="text-center py-8">
                       <Cloud className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                       <h3 className="text-lg font-medium mb-2">No Cloud Services Connected</h3>
@@ -454,7 +454,7 @@ export default function TransferPage() {
 
               {/* Start Transfer Button */}
               <div className="flex justify-center">
-                {connections.filter(conn => conn.connected).length === 0 ? (
+                {!connections || connections.filter(conn => conn.connected).length === 0 ? (
                   <Button
                     size="lg"
                     className="bg-accent hover:bg-accent/90"
