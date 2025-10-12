@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can read/write their own user document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow access to user's subcollections
+      match /{subcollection=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // Transfer jobs - users can only access their own jobs
+    match /transferJobs/{jobId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && 
+        request.auth.uid == request.resource.data.userId;
+    }
+    
+    
+    // Metrics - users can only access their own metrics
+    match /users/{userId}/metrics/{metricId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == userId;
+      allow create: if request.auth != null && 
+        request.auth.uid == userId;
+    }
+    
+    // Persistent transfers - users can only access their own transfers
+    match /persistentTransfers/{transferId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && 
+        request.auth.uid == request.resource.data.userId;
+    }
+    
+    // Real-time transfer sessions - users can only access their own sessions
+    match /realtimeSessions/{sessionId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null && 
+        request.auth.uid == request.resource.data.userId;
+    }
+    
+    // Processed sessions - only server-side access (for webhook idempotency)
+    match /processedSessions/{sessionId} {
+      allow read, write: if false; // Only server-side access via Firebase Admin SDK
+    }
+  }
+}
