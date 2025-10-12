@@ -189,7 +189,8 @@ export default function TransferPage() {
   }
 
   const canStartTransfer = () => {
-    return selectedSourceFiles.length > 0 && sourceService && destinationService && !isLoading
+    const hasConnectedServices = connections.filter(conn => conn.connected).length > 0
+    return hasConnectedServices && selectedSourceFiles.length > 0 && sourceService && destinationService && !isLoading
   }
 
   const getTotalSize = () => {
@@ -264,8 +265,18 @@ export default function TransferPage() {
               {/* Service Selection */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Select Services</CardTitle>
-                  <CardDescription>Choose source and destination cloud services</CardDescription>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle>Select Services</CardTitle>
+                      <CardDescription>Choose source and destination cloud services</CardDescription>
+                    </div>
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href="/connections">
+                        <Settings className="h-4 w-4 mr-2" />
+                        Manage Connections
+                      </Link>
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="grid md:grid-cols-2 gap-6">
@@ -276,15 +287,26 @@ export default function TransferPage() {
                           <SelectValue placeholder="Select source service" />
                         </SelectTrigger>
                         <SelectContent>
-                          {connections
-                            .filter(conn => conn.connected)
-                            .map((conn) => (
-                              <SelectItem key={conn.name} value={conn.name}>
-                                {conn.name}
-                              </SelectItem>
-                            ))}
+                          {connections.filter(conn => conn.connected).length === 0 ? (
+                            <SelectItem value="no-connections" disabled>
+                              No cloud services connected
+                            </SelectItem>
+                          ) : (
+                            connections
+                              .filter(conn => conn.connected)
+                              .map((conn) => (
+                                <SelectItem key={conn.name} value={conn.name}>
+                                  {conn.name}
+                                </SelectItem>
+                              ))
+                          )}
                         </SelectContent>
                       </Select>
+                      {connections.filter(conn => conn.connected).length === 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          No cloud services connected. Please connect a service first.
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="destination-service">Destination Service</Label>
@@ -293,17 +315,48 @@ export default function TransferPage() {
                           <SelectValue placeholder="Select destination service" />
                         </SelectTrigger>
                         <SelectContent>
-                          {connections
-                            .filter(conn => conn.connected)
-                            .map((conn) => (
-                              <SelectItem key={conn.name} value={conn.name}>
-                                {conn.name}
-                              </SelectItem>
-                            ))}
+                          {connections.filter(conn => conn.connected).length === 0 ? (
+                            <SelectItem value="no-connections" disabled>
+                              No cloud services connected
+                            </SelectItem>
+                          ) : (
+                            connections
+                              .filter(conn => conn.connected)
+                              .map((conn) => (
+                                <SelectItem key={conn.name} value={conn.name}>
+                                  {conn.name}
+                                </SelectItem>
+                              ))
+                          )}
                         </SelectContent>
                       </Select>
+                      {connections.filter(conn => conn.connected).length === 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          No cloud services connected. Please connect a service first.
+                        </p>
+                      )}
                     </div>
                   </div>
+                  
+                  {/* Connection Status */}
+                  {connections.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Connection Status</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {connections.map((conn) => (
+                          <div key={conn.name} className="flex items-center justify-between p-2 rounded border">
+                            <span className="text-sm font-medium">{conn.name}</span>
+                            <div className="flex items-center space-x-2">
+                              <div className={`w-2 h-2 rounded-full ${conn.connected ? 'bg-green-500' : 'bg-red-500'}`} />
+                              <span className="text-xs text-muted-foreground">
+                                {conn.connected ? 'Connected' : 'Disconnected'}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -314,7 +367,21 @@ export default function TransferPage() {
                   <CardDescription>Choose files to transfer from your selected services</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {sourceService && destinationService ? (
+                  {connections.filter(conn => conn.connected).length === 0 ? (
+                    <div className="text-center py-8">
+                      <Cloud className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-medium mb-2">No Cloud Services Connected</h3>
+                      <p className="text-muted-foreground mb-4">
+                        You need to connect at least one cloud service to start transferring files.
+                      </p>
+                      <Button asChild>
+                        <Link href="/connections">
+                          <Settings className="h-4 w-4 mr-2" />
+                          Connect Services
+                        </Link>
+                      </Button>
+                    </div>
+                  ) : sourceService && destinationService ? (
                     <div className="space-y-4">
                       {sourceService === 'Google Drive' && (
                         <GoogleDriveExplorer
@@ -331,7 +398,8 @@ export default function TransferPage() {
                     </div>
                   ) : (
                     <div className="text-center py-8 text-muted-foreground">
-                      Please select both source and destination services
+                      <Cloud className="h-8 w-8 mx-auto mb-2" />
+                      <p>Please select both source and destination services</p>
                     </div>
                   )}
                 </CardContent>
@@ -386,24 +454,37 @@ export default function TransferPage() {
 
               {/* Start Transfer Button */}
               <div className="flex justify-center">
-                <Button
-                  onClick={handleStartTransfer}
-                  disabled={!canStartTransfer()}
-                  size="lg"
-                  className="bg-accent hover:bg-accent/90"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                      Starting Transfer...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="h-5 w-5 mr-2" />
-                      Start Free Transfer
-                    </>
-                  )}
-                </Button>
+                {connections.filter(conn => conn.connected).length === 0 ? (
+                  <Button
+                    size="lg"
+                    className="bg-accent hover:bg-accent/90"
+                    asChild
+                  >
+                    <Link href="/connections">
+                      <Settings className="h-5 w-5 mr-2" />
+                      Connect Services First
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleStartTransfer}
+                    disabled={!canStartTransfer()}
+                    size="lg"
+                    className="bg-accent hover:bg-accent/90"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                        Starting Transfer...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-5 w-5 mr-2" />
+                        Start Free Transfer
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
 
