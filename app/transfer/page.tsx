@@ -383,15 +383,20 @@ export default function TransferPage() {
                     </div>
                   ) : sourceService && destinationService ? (
                     <div className="space-y-4">
-                      {sourceService === 'google-drive' && (
-                        <GoogleDriveExplorer
-                          onFilesSelected={setSelectedSourceFiles}
-                          selectedFiles={selectedSourceFiles}
-                        />
-                      )}
+                      {sourceService === 'google-drive' && (() => {
+                        const googleConn = (connections || []).find(c => c.id === 'google-drive')
+                        return googleConn ? (
+                          <GoogleDriveExplorer
+                            connection={googleConn}
+                            onFileSelect={setSelectedSourceFiles}
+                            selectedFiles={selectedSourceFiles}
+                          />
+                        ) : null
+                      })()}
                       {sourceService === 'onedrive' && (
                         <OneDriveExplorer
-                          onFilesSelected={setSelectedSourceFiles}
+                          connectionId="onedrive"
+                          onFileSelect={setSelectedSourceFiles}
                           selectedFiles={selectedSourceFiles}
                         />
                       )}
