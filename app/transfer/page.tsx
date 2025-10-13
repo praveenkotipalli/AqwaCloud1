@@ -292,10 +292,10 @@ export default function TransferPage() {
                               No cloud services connected
                             </SelectItem>
                           ) : (
-                            connections
-                              .filter(conn => conn.connected)
+                            (connections || [])
+                              .filter((conn) => !!conn && conn.connected)
                               .map((conn) => (
-                                <SelectItem key={conn.name} value={conn.name}>
+                                <SelectItem key={conn.id} value={conn.id}>
                                   {conn.name}
                                 </SelectItem>
                               ))
@@ -320,10 +320,10 @@ export default function TransferPage() {
                               No cloud services connected
                             </SelectItem>
                           ) : (
-                            connections
-                              .filter(conn => conn.connected)
+                            (connections || [])
+                              .filter((conn) => !!conn && conn.connected)
                               .map((conn) => (
-                                <SelectItem key={conn.name} value={conn.name}>
+                                <SelectItem key={conn.id} value={conn.id}>
                                   {conn.name}
                                 </SelectItem>
                               ))
@@ -339,17 +339,17 @@ export default function TransferPage() {
                   </div>
                   
                   {/* Connection Status */}
-                  {connections && connections.length > 0 && (
+                  {Array.isArray(connections) && connections.length > 0 && (
                     <div className="space-y-2">
                       <Label>Connection Status</Label>
                       <div className="grid grid-cols-2 gap-2">
-                        {connections.map((conn) => (
-                          <div key={conn.name} className="flex items-center justify-between p-2 rounded border">
-                            <span className="text-sm font-medium">{conn.name}</span>
+                        {(connections || []).filter(Boolean).map((conn) => (
+                          <div key={conn.id} className="flex items-center justify-between p-2 rounded border">
+                            <span className="text-sm font-medium">{conn?.name || 'Unknown'}</span>
                             <div className="flex items-center space-x-2">
-                              <div className={`w-2 h-2 rounded-full ${conn.connected ? 'bg-green-500' : 'bg-red-500'}`} />
+                              <div className={`w-2 h-2 rounded-full ${conn && conn.connected ? 'bg-green-500' : 'bg-red-500'}`} />
                               <span className="text-xs text-muted-foreground">
-                                {conn.connected ? 'Connected' : 'Disconnected'}
+                                {conn && conn.connected ? 'Connected' : 'Disconnected'}
                               </span>
                             </div>
                           </div>
@@ -383,13 +383,13 @@ export default function TransferPage() {
                     </div>
                   ) : sourceService && destinationService ? (
                     <div className="space-y-4">
-                      {sourceService === 'Google Drive' && (
+                      {sourceService === 'google-drive' && (
                         <GoogleDriveExplorer
                           onFilesSelected={setSelectedSourceFiles}
                           selectedFiles={selectedSourceFiles}
                         />
                       )}
-                      {sourceService === 'OneDrive' && (
+                      {sourceService === 'onedrive' && (
                         <OneDriveExplorer
                           onFilesSelected={setSelectedSourceFiles}
                           selectedFiles={selectedSourceFiles}
