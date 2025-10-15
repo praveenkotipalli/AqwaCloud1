@@ -582,7 +582,7 @@ export class OneDriveService {
       const uploadUrl = session.uploadUrl as string
       if (!uploadUrl) throw new Error('Upload session missing uploadUrl')
 
-      // Upload in chunks (10MB)
+      // Upload in chunks (10MB) with retry/backoff per chunk
       const total = fileData.byteLength
       const chunkSize = 10 * 1024 * 1024
       let offset = 0
@@ -590,17 +590,30 @@ export class OneDriveService {
         const end = Math.min(offset + chunkSize, total)
         const chunk = (fileData as ArrayBuffer).slice(offset, end)
         const contentRange = `bytes ${offset}-${end - 1}/${total}`
-        const resp = await fetch(uploadUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Length': String(chunk.byteLength),
-            'Content-Range': contentRange
-          },
-          body: chunk
-        })
-        if (!resp.ok && resp.status !== 202) {
+        let success = false
+        let attempt = 0
+        const maxRetries = 3
+        while (!success && attempt < maxRetries) {
+          attempt++
+          const resp = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Length': String(chunk.byteLength),
+              'Content-Range': contentRange
+            },
+            body: chunk
+          })
+          if (resp.ok || resp.status === 202) {
+            success = true
+            break
+          }
           const t = await resp.text()
-          throw new Error(`Upload chunk failed: ${resp.status} ${resp.statusText} - ${t}`)
+          if (attempt >= maxRetries) {
+            throw new Error(`Upload chunk failed: ${resp.status} ${resp.statusText} - ${t}`)
+          }
+          const backoff = Math.min(30000, 1000 * Math.pow(2, attempt))
+          console.warn(`⏳ Retrying OneDrive chunk (${attempt}/${maxRetries}) after ${backoff}ms: ${resp.status} ${resp.statusText}`)
+          await new Promise(r => setTimeout(r, backoff))
         }
         offset = end
       }

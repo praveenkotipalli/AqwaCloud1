@@ -393,7 +393,7 @@ export class GoogleDriveService {
           throw new Error('Resumable session did not return Location header')
         }
 
-        // 2) Upload in chunks (10MB)
+        // 2) Upload in chunks (10MB) with retry/backoff per chunk
         const chunkSize = 10 * 1024 * 1024
         const total = fileData.byteLength
         let offset = 0
@@ -401,17 +401,30 @@ export class GoogleDriveService {
           const end = Math.min(offset + chunkSize, total)
           const chunk = (fileData as ArrayBuffer).slice(offset, end)
           const contentRange = `bytes ${offset}-${end - 1}/${total}`
-          const resp = await fetch(uploadUrl, {
-            method: 'PUT',
-            headers: {
-              'Content-Length': String(chunk.byteLength),
-              'Content-Range': contentRange
-            },
-            body: chunk
-          })
-          if (resp.status !== 308 && !resp.ok) {
+          let success = false
+          let attempt = 0
+          const maxRetries = 3
+          while (!success && attempt < maxRetries) {
+            attempt++
+            const resp = await fetch(uploadUrl, {
+              method: 'PUT',
+              headers: {
+                'Content-Length': String(chunk.byteLength),
+                'Content-Range': contentRange
+              },
+              body: chunk
+            })
+            if (resp.status === 308 || resp.ok) {
+              success = true
+              break
+            }
             const t = await resp.text()
-            throw new Error(`Resumable chunk upload failed: ${resp.status} ${resp.statusText} - ${t}`)
+            if (attempt >= maxRetries) {
+              throw new Error(`Resumable chunk upload failed: ${resp.status} ${resp.statusText} - ${t}`)
+            }
+            const backoff = Math.min(30000, 1000 * Math.pow(2, attempt))
+            console.warn(`⏳ Retrying Drive chunk (${attempt}/${maxRetries}) after ${backoff}ms: ${resp.status} ${resp.statusText}`)
+            await new Promise(r => setTimeout(r, backoff))
           }
           offset = end
         }

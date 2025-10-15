@@ -226,13 +226,27 @@ export class RealTimeTransferService {
       // Download file from source service with timeout
       console.log(`📥 Downloading ${job.sourceFile.name} from ${session.sourceConnection.provider}...`)
       
-      const downloadPromise = session.sourceService.downloadFile(job.sourceFile.id)
+      // Download with retry and backoff
       const downloadTimeoutMs = 30 * 60 * 1000 // 30 minutes for large files
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Download timeout after 30 minutes')), downloadTimeoutMs)
-      )
-      
-      const fileData = await Promise.race([downloadPromise, timeoutPromise]) as ArrayBuffer
+      const maxDownloadRetries = 3
+      let attempt = 0
+      let fileData: ArrayBuffer | null = null
+      while (attempt < maxDownloadRetries && !fileData) {
+        attempt++
+        try {
+          const downloadPromise = session.sourceService.downloadFile(job.sourceFile.id)
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Download timeout after 30 minutes')), downloadTimeoutMs)
+          )
+          fileData = await Promise.race([downloadPromise, timeoutPromise]) as ArrayBuffer
+        } catch (err) {
+          if (attempt >= maxDownloadRetries) throw err
+          const backoff = Math.min(30000, 1000 * Math.pow(2, attempt))
+          console.warn(`⏳ Download retry ${attempt}/${maxDownloadRetries} after ${backoff}ms due to error:`, err)
+          await new Promise(r => setTimeout(r, backoff))
+        }
+      }
+      if (!fileData) throw new Error('Download failed after retries')
       console.log(`✅ Downloaded ${job.sourceFile.name}: ${fileData.byteLength} bytes`)
       
       // Update progress - Download complete, starting upload (50%)
@@ -269,7 +283,7 @@ export class RealTimeTransferService {
       
       const uploadPromise = (async () => {
         try {
-          const uploaded = await session.destService.uploadFile(fileData, job.sourceFile.name, 'root')
+          const uploaded = await session.destService.uploadFile(fileData!, job.sourceFile.name, 'root')
           try { cumulativeBytesForJob += (fileData as ArrayBuffer).byteLength } catch {}
           return uploaded
         } catch (err: any) {
