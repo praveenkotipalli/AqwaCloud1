@@ -102,6 +102,7 @@ export default function TransferPage() {
     transferJobs, 
     activeSessions,
     startTransfer,
+    startRealTimeTransfer,
     pauseTransfer,
     resumeTransfer,
     cancelTransfer,
@@ -173,11 +174,12 @@ export default function TransferPage() {
 
       console.log(`Free transfer started with job ID: ${jobId}`)
       
-      // Start the actual transfer
+      // Start the actual transfer using correct signatures
+      const destinationPath = selectedDestFiles[0]?.path || "root"
       if (enableRealTime) {
-        await startTransfer(jobId, selectedSourceFiles, selectedDestFiles, sourceService, destinationService)
+        await startRealTimeTransfer(sourceService, destinationService, selectedSourceFiles, destinationPath, true)
       } else {
-        await startPersistentTransfer(selectedSourceFiles, selectedDestFiles, sourceService, destinationService)
+        await startTransfer(sourceService, destinationService, selectedSourceFiles, destinationPath)
       }
 
     } catch (error) {
@@ -382,24 +384,47 @@ export default function TransferPage() {
                       </Button>
                     </div>
                   ) : sourceService && destinationService ? (
-                    <div className="space-y-4">
-                      {sourceService === 'google-drive' && (() => {
-                        const googleConn = (connections || []).find(c => c.id === 'google-drive')
-                        return googleConn ? (
-                          <GoogleDriveExplorer
-                            connection={googleConn}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Source</div>
+                        {sourceService === 'google-drive' && (() => {
+                          const googleConn = (connections || []).find(c => c.id === 'google-drive')
+                          return googleConn ? (
+                            <GoogleDriveExplorer
+                              connection={googleConn}
+                              onFileSelect={setSelectedSourceFiles}
+                              selectedFiles={selectedSourceFiles}
+                            />
+                          ) : null
+                        })()}
+                        {sourceService === 'onedrive' && (
+                          <OneDriveExplorer
+                            connectionId="onedrive"
                             onFileSelect={setSelectedSourceFiles}
                             selectedFiles={selectedSourceFiles}
                           />
-                        ) : null
-                      })()}
-                      {sourceService === 'onedrive' && (
-                        <OneDriveExplorer
-                          connectionId="onedrive"
-                          onFileSelect={setSelectedSourceFiles}
-                          selectedFiles={selectedSourceFiles}
-                        />
-                      )}
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Destination</div>
+                        {destinationService === 'google-drive' && (() => {
+                          const googleConn = (connections || []).find(c => c.id === 'google-drive')
+                          return googleConn ? (
+                            <GoogleDriveExplorer
+                              connection={googleConn}
+                              onFileSelect={setSelectedDestFiles}
+                              selectedFiles={selectedDestFiles}
+                            />
+                          ) : null
+                        })()}
+                        {destinationService === 'onedrive' && (
+                          <OneDriveExplorer
+                            connectionId="onedrive"
+                            onFileSelect={setSelectedDestFiles}
+                            selectedFiles={selectedDestFiles}
+                          />
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="text-center py-8 text-muted-foreground">
