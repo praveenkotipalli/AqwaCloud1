@@ -227,8 +227,9 @@ export class RealTimeTransferService {
       console.log(`📥 Downloading ${job.sourceFile.name} from ${session.sourceConnection.provider}...`)
       
       const downloadPromise = session.sourceService.downloadFile(job.sourceFile.id)
+      const downloadTimeoutMs = 30 * 60 * 1000 // 30 minutes for large files
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Download timeout after 60 seconds')), 60000)
+        setTimeout(() => reject(new Error('Download timeout after 30 minutes')), downloadTimeoutMs)
       )
       
       const fileData = await Promise.race([downloadPromise, timeoutPromise]) as ArrayBuffer
@@ -314,8 +315,9 @@ export class RealTimeTransferService {
           throw err
         }
       })()
+      const uploadTimeoutMs = 30 * 60 * 1000 // 30 minutes for large files
       const uploadTimeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Upload timeout after 60 seconds')), 60000)
+        setTimeout(() => reject(new Error('Upload timeout after 30 minutes')), uploadTimeoutMs)
       )
       
       await Promise.race([uploadPromise, uploadTimeoutPromise])

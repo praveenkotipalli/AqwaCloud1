@@ -540,7 +540,7 @@ export class OneDriveService {
     }
   }
 
-  // Upload file to OneDrive
+  // Upload file to OneDrive (uses Upload Session for large files)
   async uploadFile(fileData: ArrayBuffer, fileName: string, folderId: string = "root"): Promise<OneDriveFile> {
     console.log(`📤 Uploading file ${fileName} to OneDrive folder ${folderId}`)
     console.log(`📊 File size: ${fileData.byteLength} bytes`)
@@ -551,7 +551,7 @@ export class OneDriveService {
       startsWithEy: this.accessToken.startsWith('ey')
     })
     
-    // Use the correct OneDrive upload approach with JSON and base64
+    // Prefer Upload Session for reliability with large files
     try {
       // Clean filename for URL safety
       const cleanFileName = fileName.replace(/[<>:"/\\|?*]/g, '_')
@@ -559,103 +559,67 @@ export class OneDriveService {
       console.log(`📝 Original filename: ${fileName}`)
       console.log(`📝 Clean filename: ${cleanFileName}`)
       
-      // Convert file data to base64 efficiently
-      const uint8Array = new Uint8Array(fileData)
-      let binaryString = ''
-      const chunkSize = 8192 // Process in chunks to avoid stack overflow
-      
-      for (let i = 0; i < uint8Array.length; i += chunkSize) {
-        const chunk = uint8Array.slice(i, i + chunkSize)
-        binaryString += String.fromCharCode.apply(null, Array.from(chunk))
-      }
-      
-      const base64String = btoa(binaryString)
-      
-      console.log(`📊 File size: ${fileData.byteLength} bytes`)
-      console.log(`📊 Base64 size: ${base64String.length} characters`)
-      
-      // Use the correct OneDrive upload endpoint with JSON
-      const endpoint = folderId === "root" 
-        ? `/me/drive/root:/${cleanFileName}:/content`
-        : `/me/drive/items/${folderId}:/${cleanFileName}:/content`
-      
-      console.log(`🌐 Upload endpoint: ${this.baseUrl}${endpoint}`)
-      
-      // Convert base64 to binary for proper file upload
-      const binaryData = Uint8Array.from(atob(base64String), c => c.charCodeAt(0))
-      
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        method: 'PUT',
+      const parentPath = folderId === 'root' ? 'root' : `items/${folderId}`
+      const createSessionResp = await fetch(`${this.baseUrl}/me/drive/${parentPath}:/${cleanFileName}:/createUploadSession`, {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/octet-stream',
+          'Content-Type': 'application/json'
         },
-        body: binaryData
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error(`❌ OneDrive upload error: ${response.status} ${response.statusText}`)
-        console.error(`📄 Error details:`, errorText)
-        
-        // Try alternative approach - create item first, then upload content
-        if (response.status === 400 || response.status === 404) {
-          console.log(`🔄 Trying create-then-upload approach...`)
-          
-          try {
-            // First create the file item
-            const createResponse = await fetch(`${this.baseUrl}/me/drive/root/children`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${this.accessToken}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                name: cleanFileName,
-                file: {},
-                '@microsoft.graph.conflictBehavior': 'rename'
-              })
-            })
-            
-            if (createResponse.ok) {
-              const createdItem = await createResponse.json()
-              console.log(`✅ Created file item:`, createdItem.id)
-              
-              // Now upload the content using binary data
-              const binaryData = Uint8Array.from(atob(base64String), c => c.charCodeAt(0))
-              const contentResponse = await fetch(`${this.baseUrl}/me/drive/items/${createdItem.id}/content`, {
-                method: 'PUT',
-                headers: {
-                  'Authorization': `Bearer ${this.accessToken}`,
-                  'Content-Type': 'application/octet-stream',
-                },
-                body: binaryData
-              })
-              
-              if (contentResponse.ok) {
-                const uploadedFile = await contentResponse.json()
-                console.log(`✅ Uploaded file ${fileName} to OneDrive (create-then-upload):`, uploadedFile.id)
-                return uploadedFile
-              } else {
-                const contentErrorText = await contentResponse.text()
-                console.error(`❌ Content upload failed: ${contentResponse.status} ${contentResponse.statusText}`)
-                console.error(`📄 Content error details:`, contentErrorText)
-              }
-            } else {
-              const createErrorText = await createResponse.text()
-              console.error(`❌ File creation failed: ${createResponse.status} ${createResponse.statusText}`)
-              console.error(`📄 Create error details:`, createErrorText)
-            }
-          } catch (createError) {
-            console.error(`❌ Create-then-upload approach failed:`, createError)
+        body: JSON.stringify({
+          item: {
+            '@microsoft.graph.conflictBehavior': 'replace',
+            name: cleanFileName
           }
+        })
+      })
+      if (!createSessionResp.ok) {
+        const t = await createSessionResp.text()
+        console.error('❌ Failed to create upload session', t)
+        throw new Error(`Create upload session failed: ${createSessionResp.status} ${createSessionResp.statusText}`)
+      }
+      const session = await createSessionResp.json()
+      const uploadUrl = session.uploadUrl as string
+      if (!uploadUrl) throw new Error('Upload session missing uploadUrl')
+
+      // Upload in chunks (10MB)
+      const total = fileData.byteLength
+      const chunkSize = 10 * 1024 * 1024
+      let offset = 0
+      while (offset < total) {
+        const end = Math.min(offset + chunkSize, total)
+        const chunk = (fileData as ArrayBuffer).slice(offset, end)
+        const contentRange = `bytes ${offset}-${end - 1}/${total}`
+        const resp = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Length': String(chunk.byteLength),
+            'Content-Range': contentRange
+          },
+          body: chunk
+        })
+        if (!resp.ok && resp.status !== 202) {
+          const t = await resp.text()
+          throw new Error(`Upload chunk failed: ${resp.status} ${resp.statusText} - ${t}`)
         }
-        
-        throw new Error(`OneDrive upload error: ${response.status} ${response.statusText} - ${errorText}`)
+        offset = end
       }
 
-      const uploadedFile = await response.json()
-      console.log(`✅ Uploaded file ${fileName} to OneDrive:`, uploadedFile.id)
+      // Finalize (GET on uploadUrl returns final item sometimes; to be safe, request item by path)
+      const finalizeEndpoint = folderId === 'root' 
+        ? `/me/drive/root:/${encodeURIComponent(cleanFileName)}`
+        : `/me/drive/items/${folderId}:/${encodeURIComponent(cleanFileName)}`
+      const finalizeResp = await fetch(`${this.baseUrl}${finalizeEndpoint}` , {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${this.accessToken}` }
+      })
+      if (!finalizeResp.ok) {
+        const t = await finalizeResp.text()
+        console.warn('⚠️ Could not fetch finalized item, returning minimal object', t)
+        return { id: 'unknown', name: cleanFileName, size: total, lastModifiedDateTime: new Date().toISOString(), folder: undefined as any } as OneDriveFile
+      }
+      const uploadedFile = await finalizeResp.json()
+      console.log(`✅ Uploaded file ${fileName} to OneDrive via session:`, uploadedFile.id)
       return uploadedFile
       
     } catch (error) {

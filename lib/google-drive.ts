@@ -314,7 +314,7 @@ export class GoogleDriveService {
     return exportMimeTypes[googleDocsMimeType] || 'application/pdf'
   }
 
-  // Upload file to Google Drive
+  // Upload file to Google Drive (resumable for large files)
   async uploadFile(fileData: ArrayBuffer, fileName: string, folderId: string = "root"): Promise<GoogleDriveFile> {
     console.log(`📤 Uploading file ${fileName} to Google Drive folder ${folderId}`)
     console.log(`📊 File size: ${fileData.byteLength} bytes`)
@@ -369,7 +369,65 @@ export class GoogleDriveService {
       bodyBytes.set(new Uint8Array(fileData), preambleBytes.length)
       bodyBytes.set(closingBytes, preambleBytes.length + fileData.byteLength)
 
-      // Use the Google Drive upload endpoint (note the "upload" hostname segment)
+      // For very large files (> 150MB), prefer resumable uploads
+      if (fileData.byteLength > 150 * 1024 * 1024) {
+        console.log(`⏫ Using resumable upload flow for large file`)
+        // 1) Start a resumable session
+        const sessionResp = await fetch(`${this.uploadBaseUrl}/files?uploadType=resumable`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json; charset=UTF-8'
+          },
+          body: JSON.stringify({
+            name: fileName,
+            parents: folderId === "root" ? undefined : [folderId]
+          })
+        })
+        if (!sessionResp.ok) {
+          const t = await sessionResp.text()
+          throw new Error(`Failed to start resumable session: ${sessionResp.status} ${sessionResp.statusText} - ${t}`)
+        }
+        const uploadUrl = sessionResp.headers.get('Location')
+        if (!uploadUrl) {
+          throw new Error('Resumable session did not return Location header')
+        }
+
+        // 2) Upload in chunks (10MB)
+        const chunkSize = 10 * 1024 * 1024
+        const total = fileData.byteLength
+        let offset = 0
+        while (offset < total) {
+          const end = Math.min(offset + chunkSize, total)
+          const chunk = (fileData as ArrayBuffer).slice(offset, end)
+          const contentRange = `bytes ${offset}-${end - 1}/${total}`
+          const resp = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Length': String(chunk.byteLength),
+              'Content-Range': contentRange
+            },
+            body: chunk
+          })
+          if (resp.status !== 308 && !resp.ok) {
+            const t = await resp.text()
+            throw new Error(`Resumable chunk upload failed: ${resp.status} ${resp.statusText} - ${t}`)
+          }
+          offset = end
+        }
+
+        // 3) Final response
+        const finalizeResp = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Length': '0', 'Content-Range': `bytes */${total}` } })
+        if (!finalizeResp.ok) {
+          const t = await finalizeResp.text()
+          throw new Error(`Finalize resumable upload failed: ${finalizeResp.status} ${finalizeResp.statusText} - ${t}`)
+        }
+        const uploadedFile = await finalizeResp.json()
+        console.log(`✅ Resumable upload complete:`, uploadedFile.id)
+        return uploadedFile
+      }
+
+      // Use the Google Drive multipart upload for smaller files
       const response = await fetch(`${this.uploadBaseUrl}/files?uploadType=multipart`, {
         method: 'POST',
         headers: {
