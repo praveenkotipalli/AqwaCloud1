@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -454,6 +455,63 @@ export default function TransferPage() {
                       onCheckedChange={setEnableRealTime}
                     />
                   </div>
+                  {/* Inline Transfer Status under settings */}
+                  <div className="space-y-4 mt-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-medium">Transfer Status</h3>
+                      <div className="text-xs text-muted-foreground">
+                        Active: {transferJobs.filter(j => j.status === 'transferring').length} • Completed: {transferJobs.filter(j => j.status === 'completed').length}
+                      </div>
+                    </div>
+                    {transferJobs.length > 0 && (
+                      <Separator className="my-1" />
+                    )}
+                    {transferJobs.length === 0 && (
+                      <div className="text-sm text-muted-foreground">No transfers yet. Start one to see progress here.</div>
+                    )}
+                    <div className="space-y-3">
+                      {transferJobs.slice().reverse().map(job => (
+                        <div key={job.id} className={`p-3 rounded-md border ${job.status === 'failed' ? 'border-red-300' : job.status === 'completed' ? 'border-green-300' : ''}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-sm font-medium">
+                              {job.sourceService} → {job.destinationService}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {job.status === 'transferring' && (
+                                <Button size="icon" variant="ghost" onClick={() => pauseTransfer(job.id)} aria-label="Pause">
+                                  <Pause className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status === 'paused' && (
+                                <Button size="icon" variant="ghost" onClick={() => resumeTransfer(job.id)} aria-label="Resume">
+                                  <Play className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status !== 'completed' && (
+                                <Button size="icon" variant="ghost" onClick={() => cancelTransfer(job.id)} aria-label="Cancel">
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                            <span>Status: {job.status}</span>
+                            <span>{Math.max(0, Math.min(100, Math.round(job.progress)))}%</span>
+                          </div>
+                          <Progress value={Math.max(0, Math.min(100, job.progress))} />
+                          {job.status === 'failed' && (
+                            <Alert variant="destructive" className="mt-2">
+                              <AlertTitle>Transfer failed</AlertTitle>
+                              <AlertDescription>{job.error || 'Unknown error'}</AlertDescription>
+                            </Alert>
+                          )}
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Files selected: {job.sourceFiles?.length || 0}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -570,7 +628,7 @@ export default function TransferPage() {
                             </div>
                           </div>
                           <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-                            <span>Status: {job.status}</span>
+                            <span>Status: {job.status}{job.status === 'failed' && job.error ? ` — ${job.error}` : ''}</span>
                             <span>{Math.max(0, Math.min(100, Math.round(job.progress)))}%</span>
                           </div>
                           <Progress value={Math.max(0, Math.min(100, job.progress))} />
