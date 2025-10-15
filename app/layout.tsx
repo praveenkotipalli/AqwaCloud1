@@ -5,6 +5,7 @@ import "./globals.css"
 import { AuthProvider } from "@/hooks/use-auth"
 import { OfflineFallback } from "@/components/offline-fallback"
 import { FirebaseStatus } from "@/components/firebase-status"
+import { Analytics } from "@vercel/analytics/react"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -31,6 +32,7 @@ export default function RootLayout({
           {children}
           <OfflineFallback />
           <FirebaseStatus />
+          <Analytics />
         </AuthProvider>
       </body>
     </html>

@@ -535,6 +535,51 @@ export default function TransferPage() {
                       <span>Completed today:</span>
                       <span className="font-medium">{transferJobs.filter(j => j.status === 'completed').length}</span>
                     </div>
+
+                    {transferJobs.length > 0 && (
+                      <Separator className="my-2" />
+                    )}
+
+                    {transferJobs.length === 0 && (
+                      <div className="text-sm text-muted-foreground">No transfers yet. Start one to see progress here.</div>
+                    )}
+
+                    <div className="space-y-3">
+                      {transferJobs.slice().reverse().map(job => (
+                        <div key={job.id} className="p-3 rounded-md border">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-sm font-medium">
+                              {job.sourceService} → {job.destinationService}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {job.status === 'transferring' && (
+                                <Button size="icon" variant="ghost" onClick={() => pauseTransfer(job.id)} aria-label="Pause">
+                                  <Pause className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status === 'paused' && (
+                                <Button size="icon" variant="ghost" onClick={() => resumeTransfer(job.id)} aria-label="Resume">
+                                  <Play className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status !== 'completed' && (
+                                <Button size="icon" variant="ghost" onClick={() => cancelTransfer(job.id)} aria-label="Cancel">
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                            <span>Status: {job.status}</span>
+                            <span>{Math.max(0, Math.min(100, Math.round(job.progress)))}%</span>
+                          </div>
+                          <Progress value={Math.max(0, Math.min(100, job.progress))} />
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Files selected: {job.sourceFiles?.length || 0}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

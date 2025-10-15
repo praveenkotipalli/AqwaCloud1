@@ -105,6 +105,9 @@ function AdminContent() {
             <span className="text-xl font-bold gradient-text">AqwaCloud Admin</span>
           </Link>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/admin/analytics">Analytics</Link>
+            </Button>
             <Button variant="outline" size="sm" onClick={() => router.push('/dashboard?asUser=1')}>User View</Button>
             <Button size="sm" variant="outline" onClick={() => logout?.()}>
               <LogOut className="h-4 w-4 mr-2" /> Logout
