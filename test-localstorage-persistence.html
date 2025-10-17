@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LocalStorage Persistence Test</title>
+</head>
+<body>
+    <h1>🧪 LocalStorage Persistence Test</h1>
+    
+    <div id="status">Ready to test...</div>
+    <div id="results"></div>
+    
+    <button onclick="testStorage()">Test Storage</button>
+    <button onclick="testRetrieval()">Test Retrieval</button>
+    <button onclick="testUpdate()">Test Update</button>
+    <button onclick="testCleanup()">Cleanup</button>
+
+    <script>
+        function testStorage() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                status.textContent = 'Testing localStorage storage...'
+                
+                const testJob = {
+                    id: 'test-transfer-' + Date.now(),
+                    userId: 'test-user-123',
+                    sourceService: 'google-drive',
+                    destinationService: 'onedrive',
+                    sourceFiles: [{ name: 'test.txt', size: '1MB' }],
+                    destinationPath: 'root',
+                    status: 'pending',
+                    progress: 0,
+                    startTime: Date.now(),
+                    currentFileIndex: 0,
+                    totalFiles: 1,
+                    transferredBytes: 0,
+                    totalBytes: 1048576
+                }
+                
+                // Store in localStorage
+                const existingJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+                existingJobs.push(testJob)
+                localStorage.setItem('persistentTransfers', JSON.stringify(existingJobs))
+                
+                status.textContent = '✅ Storage test PASSED!'
+                results.innerHTML = '<p>✅ Successfully stored transfer job: ' + testJob.id + '</p>'
+                
+            } catch (error) {
+                status.textContent = '❌ Storage test FAILED!'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+        
+        function testRetrieval() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                status.textContent = 'Testing localStorage retrieval...'
+                
+                const storedJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+                const userJobs = storedJobs.filter(job => 
+                    job.userId === 'test-user-123' && 
+                    ['pending', 'transferring', 'paused'].includes(job.status)
+                )
+                
+                status.textContent = '✅ Retrieval test PASSED!'
+                results.innerHTML = '<p>✅ Found ' + userJobs.length + ' transfers for test-user-123</p>'
+                
+                userJobs.forEach(job => {
+                    results.innerHTML += '<p>  - ' + job.id + ': ' + job.status + ' (' + job.progress + '%)</p>'
+                })
+                
+            } catch (error) {
+                status.textContent = '❌ Retrieval test FAILED!'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+        
+        function testUpdate() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                status.textContent = 'Testing localStorage update...'
+                
+                const storedJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+                const jobIndex = storedJobs.findIndex(job => job.userId === 'test-user-123')
+                
+                if (jobIndex !== -1) {
+                    storedJobs[jobIndex] = { 
+                        ...storedJobs[jobIndex], 
+                        status: 'transferring', 
+                        progress: 50,
+                        updatedAt: Date.now()
+                    }
+                    localStorage.setItem('persistentTransfers', JSON.stringify(storedJobs))
+                    
+                    status.textContent = '✅ Update test PASSED!'
+                    results.innerHTML = '<p>✅ Successfully updated transfer job</p>'
+                } else {
+                    status.textContent = '❌ Update test FAILED!'
+                    results.innerHTML = '<p>❌ No job found to update</p>'
+                }
+                
+            } catch (error) {
+                status.textContent = '❌ Update test FAILED!'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+        
+        function testCleanup() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                status.textContent = 'Cleaning up test data...'
+                
+                localStorage.removeItem('persistentTransfers')
+                
+                status.textContent = '✅ Cleanup completed!'
+                results.innerHTML = '<p>✅ Test data cleaned up</p>'
+                
+            } catch (error) {
+                status.textContent = '❌ Cleanup failed!'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+    </script>
+</body>
+</html>

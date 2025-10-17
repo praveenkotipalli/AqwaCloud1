@@ -23,12 +23,13 @@ export interface StoredTransferJob {
 // Store a transfer job in the database
 export async function storeTransferJob(job: StoredTransferJob): Promise<void> {
   try {
+    // Try to store in main collection first
     await setDoc(doc(db, 'activeTransfers', job.id), {
       ...job,
       updatedAt: serverTimestamp()
     })
     
-    // Also store in user's transfer history
+    // Try to store in user's collection
     await setDoc(doc(db, 'users', job.userId, 'activeTransfers', job.id), {
       ...job,
       updatedAt: serverTimestamp()
@@ -37,24 +38,50 @@ export async function storeTransferJob(job: StoredTransferJob): Promise<void> {
     console.log(`💾 Stored transfer job: ${job.id}`)
   } catch (error) {
     console.error('❌ Error storing transfer job:', error)
-    throw error
+    
+    // Fallback: Store in localStorage for persistence
+    try {
+      const existingJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+      existingJobs.push(job)
+      localStorage.setItem('persistentTransfers', JSON.stringify(existingJobs))
+      console.log(`💾 Stored transfer job in localStorage: ${job.id}`)
+    } catch (localError) {
+      console.error('❌ Error storing in localStorage:', localError)
+      throw error // Re-throw original error if localStorage also fails
+    }
   }
 }
 
 // Get all active transfers for a user
 export async function getActiveTransfers(userId: string): Promise<StoredTransferJob[]> {
   try {
+    // Simplified query without complex ordering to avoid index requirements
     const userTransfersQuery = query(
       collection(db, 'users', userId, 'activeTransfers'),
-      where('status', 'in', ['pending', 'transferring', 'paused']),
-      orderBy('startTime', 'desc')
+      where('status', 'in', ['pending', 'transferring', 'paused'])
     )
     
     const snapshot = await getDocs(userTransfersQuery)
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoredTransferJob))
+    const transfers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoredTransferJob))
+    
+    // Sort in memory to avoid index requirements
+    return transfers.sort((a, b) => b.startTime - a.startTime)
   } catch (error) {
-    console.error('❌ Error fetching active transfers:', error)
-    return []
+    console.error('❌ Error fetching active transfers from database:', error)
+    
+    // Fallback: Get from localStorage
+    try {
+      const storedJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+      const userJobs = storedJobs.filter((job: StoredTransferJob) => 
+        job.userId === userId && 
+        ['pending', 'transferring', 'paused'].includes(job.status)
+      )
+      console.log(`💾 Retrieved ${userJobs.length} transfers from localStorage`)
+      return userJobs.sort((a, b) => b.startTime - a.startTime)
+    } catch (localError) {
+      console.error('❌ Error fetching from localStorage:', localError)
+      return []
+    }
   }
 }
 
@@ -78,8 +105,22 @@ export async function updateTransferJob(
     
     console.log(`📝 Updated transfer job: ${jobId}`)
   } catch (error) {
-    console.error('❌ Error updating transfer job:', error)
-    throw error
+    console.error('❌ Error updating transfer job in database:', error)
+    
+    // Fallback: Update in localStorage
+    try {
+      const storedJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+      const jobIndex = storedJobs.findIndex((job: StoredTransferJob) => job.id === jobId)
+      
+      if (jobIndex !== -1) {
+        storedJobs[jobIndex] = { ...storedJobs[jobIndex], ...updates, updatedAt: Date.now() }
+        localStorage.setItem('persistentTransfers', JSON.stringify(storedJobs))
+        console.log(`📝 Updated transfer job in localStorage: ${jobId}`)
+      }
+    } catch (localError) {
+      console.error('❌ Error updating in localStorage:', localError)
+      throw error // Re-throw original error if localStorage also fails
+    }
   }
 }
 

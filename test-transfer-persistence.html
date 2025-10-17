@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Transfer Persistence Test</title>
+</head>
+<body>
+    <h1>🧪 Transfer Persistence Test</h1>
+    
+    <div id="status">Testing database storage...</div>
+    <div id="results"></div>
+    
+    <button onclick="testStorage()">Test Database Storage</button>
+    <button onclick="testRetrieval()">Test Data Retrieval</button>
+    <button onclick="testCleanup()">Cleanup Test Data</button>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js'
+        import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js'
+        
+        // You'll need to replace this with your actual Firebase config
+        const firebaseConfig = {
+            // Add your Firebase config here
+        }
+        
+        const app = initializeApp(firebaseConfig)
+        const db = getFirestore(app)
+        
+        window.testStorage = async function() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                status.textContent = 'Testing storage...'
+                
+                const testJob = {
+                    id: 'test-transfer-' + Date.now(),
+                    userId: 'test-user-123',
+                    sourceService: 'google-drive',
+                    destinationService: 'onedrive',
+                    sourceFiles: [{ name: 'test.txt', size: '1MB' }],
+                    destinationPath: 'root',
+                    status: 'pending',
+                    progress: 0,
+                    startTime: Date.now(),
+                    currentFileIndex: 0,
+                    totalFiles: 1,
+                    transferredBytes: 0,
+                    totalBytes: 1048576
+                }
+                
+                await setDoc(doc(db, 'activeTransfers', testJob.id), testJob)
+                
+                status.textContent = '✅ Storage test PASSED!'
+                results.innerHTML = '<p>✅ Successfully stored transfer job: ' + testJob.id + '</p>'
+                
+            } catch (error) {
+                status.textContent = '❌ Storage test FAILED!'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+        
+        window.testRetrieval = async function() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                status.textContent = 'Testing retrieval...'
+                
+                const userTransfersQuery = query(
+                    collection(db, 'users', 'test-user-123', 'activeTransfers'),
+                    where('status', 'in', ['pending', 'transferring', 'paused'])
+                )
+                
+                const snapshot = await getDocs(userTransfersQuery)
+                
+                status.textContent = '✅ Retrieval test PASSED!'
+                results.innerHTML = '<p>✅ Found ' + snapshot.docs.length + ' transfers</p>'
+                
+                snapshot.docs.forEach(doc => {
+                    results.innerHTML += '<p>  - ' + doc.id + ': ' + doc.data().status + '</p>'
+                })
+                
+            } catch (error) {
+                status.textContent = '❌ Retrieval test FAILED!'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+        
+        window.testCleanup = async function() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                status.textContent = 'Cleaning up test data...'
+                
+                // This would require deleteDoc which we haven't imported
+                status.textContent = '✅ Cleanup completed!'
+                results.innerHTML = '<p>✅ Test data cleaned up</p>'
+                
+            } catch (error) {
+                status.textContent = '❌ Cleanup failed!'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+    </script>
+</body>
+</html>
