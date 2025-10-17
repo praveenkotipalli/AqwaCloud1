@@ -1,195 +1,205 @@
+"use client"
+
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './use-auth'
-import { persistentTransferService, PersistentTransferJob, TransferProgressUpdate } from '@/lib/persistent-transfer-service'
-import { CloudConnection } from './use-cloud-connections'
 
-export interface UsePersistentTransfersReturn {
-  // Transfer management
-  startTransfer: (
-    sourceConnection: CloudConnection,
-    destConnection: CloudConnection,
-    sourceFile: any
-  ) => Promise<string>
-  
-  // Transfer status
-  activeTransfers: PersistentTransferJob[]
-  completedTransfers: PersistentTransferJob[]
-  allTransfers: PersistentTransferJob[]
-  
-  // Transfer control
-  pauseTransfer: (jobId: string) => Promise<void>
-  resumeTransfer: (jobId: string) => Promise<void>
-  cancelTransfer: (jobId: string) => Promise<void>
-  
-  // Loading states
-  isLoading: boolean
-  error: string | null
-  
-  // Progress updates
-  progressUpdates: Map<string, TransferProgressUpdate>
-  
-  // Statistics
-  stats: {
-    totalTransfers: number
-    activeCount: number
-    completedCount: number
-    failedCount: number
-    totalBytesTransferred: number
-  }
+export interface PersistentTransferJob {
+  id: string
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'paused'
+  progress: number
+  error?: string
+  createdAt: Date
+  startedAt?: Date
+  completedAt?: Date
+  sourceService: string
+  destinationService: string
+  sourceFiles: any[]
+  retryCount: number
+  maxRetries: number
 }
 
-export function usePersistentTransfers(): UsePersistentTransfersReturn {
+export function usePersistentTransfers() {
   const { user } = useAuth()
-  const [activeTransfers, setActiveTransfers] = useState<PersistentTransferJob[]>([])
-  const [completedTransfers, setCompletedTransfers] = useState<PersistentTransferJob[]>([])
-  const [allTransfers, setAllTransfers] = useState<PersistentTransferJob[]>([])
-  const [isLoading, setIsLoading] = useState(false)
+  const [activeJobs, setActiveJobs] = useState<PersistentTransferJob[]>([])
+  const [recentJobs, setRecentJobs] = useState<PersistentTransferJob[]>([])
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [progressUpdates, setProgressUpdates] = useState<Map<string, TransferProgressUpdate>>(new Map())
 
-  // Load user's transfer jobs
-  const loadTransferJobs = useCallback(async () => {
+  // Fetch transfer jobs from server
+  const fetchTransferJobs = useCallback(async () => {
     if (!user?.id) return
 
-    setIsLoading(true)
-    setError(null)
-
     try {
-      const [active, completed] = await Promise.all([
-        persistentTransferService.getActiveTransfers(user.id),
-        persistentTransferService.getCompletedTransfers(user.id)
-      ])
+      setLoading(true)
+      setError(null)
 
-      setActiveTransfers(active)
-      setCompletedTransfers(completed)
-      setAllTransfers([...active, ...completed])
-      
-      console.log(`📊 Loaded ${active.length} active and ${completed.length} completed transfers`)
+      const response = await fetch(`/api/transfers/status?userId=${user.id}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch transfer status')
+      }
+
+      const data = await response.json()
+      setActiveJobs(data.activeJobs || [])
+      setRecentJobs(data.recentJobs || [])
+
     } catch (err) {
-      console.error('❌ Failed to load transfer jobs:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load transfers')
+      console.error('❌ Error fetching transfer jobs:', err)
+      setError(err instanceof Error ? err.message : 'Failed to fetch transfers')
     } finally {
-      setIsLoading(false)
+      setLoading(false)
     }
   }, [user?.id])
 
-  // Start a new transfer
-  const startTransfer = useCallback(async (
-    sourceConnection: CloudConnection,
-    destConnection: CloudConnection,
-    sourceFile: any
-  ): Promise<string> => {
+  // Poll for updates every 5 seconds
+  useEffect(() => {
+    if (!user?.id) return
+
+    fetchTransferJobs()
+    
+    const interval = setInterval(fetchTransferJobs, 5000)
+    return () => clearInterval(interval)
+  }, [user?.id, fetchTransferJobs])
+
+  // Queue a new transfer job
+  const queueTransfer = useCallback(async (
+    sourceService: string,
+    destinationService: string,
+    sourceFiles: any[],
+    destinationPath: string = 'root',
+    priority: number = 1
+  ) => {
     if (!user?.id) {
       throw new Error('User not authenticated')
     }
 
     try {
-      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`
-      const jobId = await persistentTransferService.startTransfer(
-        user.id,
-        sessionId,
-        sourceConnection,
-        destConnection,
-        sourceFile
-      )
-
-      console.log(`🚀 Started persistent transfer: ${jobId}`)
-      
-      // Reload transfers to show the new one
-      await loadTransferJobs()
-      
-      return jobId
-    } catch (err) {
-      console.error('❌ Failed to start transfer:', err)
-      throw err
-    }
-  }, [user?.id, loadTransferJobs])
-
-  // Pause a transfer
-  const pauseTransfer = useCallback(async (jobId: string) => {
-    try {
-      await persistentTransferService.pauseTransfer(jobId)
-      await loadTransferJobs()
-      console.log(`⏸️ Transfer paused: ${jobId}`)
-    } catch (err) {
-      console.error('❌ Failed to pause transfer:', err)
-      throw err
-    }
-  }, [loadTransferJobs])
-
-  // Resume a transfer
-  const resumeTransfer = useCallback(async (jobId: string) => {
-    try {
-      await persistentTransferService.resumeTransfer(jobId)
-      await loadTransferJobs()
-      console.log(`▶️ Transfer resumed: ${jobId}`)
-    } catch (err) {
-      console.error('❌ Failed to resume transfer:', err)
-      throw err
-    }
-  }, [loadTransferJobs])
-
-  // Cancel a transfer
-  const cancelTransfer = useCallback(async (jobId: string) => {
-    try {
-      await persistentTransferService.cancelTransfer(jobId)
-      await loadTransferJobs()
-      console.log(`❌ Transfer cancelled: ${jobId}`)
-    } catch (err) {
-      console.error('❌ Failed to cancel transfer:', err)
-      throw err
-    }
-  }, [loadTransferJobs])
-
-  // Setup progress listener
-  useEffect(() => {
-    if (!user?.id) return
-
-    const handleProgressUpdate = (update: TransferProgressUpdate) => {
-      setProgressUpdates(prev => {
-        const newMap = new Map(prev)
-        newMap.set(update.jobId, update)
-        return newMap
+      const response = await fetch('/api/transfers/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          sourceService,
+          destinationService,
+          sourceFiles,
+          destinationPath,
+          priority
+        })
       })
 
-      // Also update the transfers list if needed
-      loadTransferJobs()
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to queue transfer')
+      }
+
+      const result = await response.json()
+      console.log(`📋 Transfer queued: ${result.jobId}`)
+      
+      // Refresh jobs list
+      await fetchTransferJobs()
+      
+      return result.jobId
+    } catch (err) {
+      console.error('❌ Error queuing transfer:', err)
+      throw err
     }
+  }, [user?.id, fetchTransferJobs])
 
-    persistentTransferService.addProgressListener(user.id, handleProgressUpdate)
+  // Get specific job status
+  const getJobStatus = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch(`/api/transfers/status?jobId=${jobId}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch job status')
+      }
 
-    return () => {
-      persistentTransferService.removeProgressListener(user.id)
+      const data = await response.json()
+      return data.job
+    } catch (err) {
+      console.error('❌ Error fetching job status:', err)
+      throw err
     }
-  }, [user?.id, loadTransferJobs])
+  }, [])
 
-  // Load transfers on mount and when user changes
-  useEffect(() => {
-    loadTransferJobs()
-  }, [loadTransferJobs])
+  // Pause a job
+  const pauseJob = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch('/api/transfers/queue', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          status: 'paused'
+        })
+      })
 
-  // Calculate statistics
-  const stats = {
-    totalTransfers: allTransfers.length,
-    activeCount: activeTransfers.length,
-    completedCount: completedTransfers.filter(t => t.status === 'completed').length,
-    failedCount: completedTransfers.filter(t => t.status === 'failed').length,
-    totalBytesTransferred: allTransfers.reduce((sum, transfer) => 
-      sum + (transfer.bytesTransferred || 0), 0
-    )
-  }
+      if (!response.ok) {
+        throw new Error('Failed to pause job')
+      }
+
+      await fetchTransferJobs()
+    } catch (err) {
+      console.error('❌ Error pausing job:', err)
+      throw err
+    }
+  }, [fetchTransferJobs])
+
+  // Resume a job
+  const resumeJob = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch('/api/transfers/queue', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          status: 'queued'
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to resume job')
+      }
+
+      await fetchTransferJobs()
+    } catch (err) {
+      console.error('❌ Error resuming job:', err)
+      throw err
+    }
+  }, [fetchTransferJobs])
+
+  // Cancel a job
+  const cancelJob = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch('/api/transfers/queue', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobId,
+          status: 'failed',
+          error: 'Cancelled by user'
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel job')
+      }
+
+      await fetchTransferJobs()
+    } catch (err) {
+      console.error('❌ Error cancelling job:', err)
+      throw err
+    }
+  }, [fetchTransferJobs])
 
   return {
-    startTransfer,
-    activeTransfers,
-    completedTransfers,
-    allTransfers,
-    pauseTransfer,
-    resumeTransfer,
-    cancelTransfer,
-    isLoading,
+    activeJobs,
+    recentJobs,
+    loading,
     error,
-    progressUpdates,
-    stats
+    fetchTransferJobs,
+    queueTransfer,
+    getJobStatus,
+    pauseJob,
+    resumeJob,
+    cancelJob
   }
 }

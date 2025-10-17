@@ -111,7 +111,15 @@ export default function TransferPage() {
   } = useCloudConnections()
 
   // Persistent transfers hook
-  const { startTransfer: startPersistentTransfer } = usePersistentTransfers()
+  const { 
+    activeJobs, 
+    recentJobs, 
+    loading: persistentLoading, 
+    queueTransfer, 
+    pauseJob, 
+    resumeJob, 
+    cancelJob 
+  } = usePersistentTransfers()
 
   const [sourceService, setSourceService] = useState<string>("")
   const [destinationService, setDestinationService] = useState<string>("")
@@ -156,10 +164,10 @@ export default function TransferPage() {
       // Free platform - no limits or billing checks needed
       console.log(`Free transfer: ${totalGB.toFixed(2)}GB to transfer`)
 
-      const jobId = `transfer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      const localJobId = `transfer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       
       const newTransfer: TransferJob = {
-        id: jobId,
+        id: localJobId,
         sourceService,
         destinationService,
         sourceFiles: selectedSourceFiles,
@@ -173,14 +181,23 @@ export default function TransferPage() {
       setSelectedSourceFiles([])
       setSelectionSide(null)
 
-      console.log(`Free transfer started with job ID: ${jobId}`)
+      console.log(`Free transfer started with job ID: ${localJobId}`)
       
-      // Start the actual transfer using correct signatures
+      // Queue transfer for background processing (persistent)
       const destinationPath = selectedDestFiles[0]?.path || "root"
+      const persistentJobId = await queueTransfer(
+        sourceService,
+        destinationService,
+        selectedSourceFiles,
+        destinationPath,
+        1
+      )
+      console.log(`📋 Transfer queued for background processing: ${persistentJobId}`)
+
+      // Also start real-time transfer if enabled (for immediate feedback)
       if (enableRealTime) {
+        const destinationPath = selectedDestFiles[0]?.path || "root"
         await startRealTimeTransfer(sourceService, destinationService, selectedSourceFiles, destinationPath, true)
-      } else {
-        await startTransfer(sourceService, destinationService, selectedSourceFiles, destinationPath)
       }
 
     } catch (error) {
@@ -603,6 +620,7 @@ export default function TransferPage() {
                     )}
 
                     <div className="space-y-3">
+                      {/* Real-time transfers */}
                       {transferJobs.slice().reverse().map(job => (
                         <div key={job.id} className="p-3 rounded-md border">
                           <div className="flex items-center justify-between mb-2">
@@ -634,6 +652,43 @@ export default function TransferPage() {
                           <Progress value={Math.max(0, Math.min(100, job.progress))} />
                           <div className="mt-2 text-xs text-muted-foreground">
                             Files selected: {job.sourceFiles?.length || 0}
+                          </div>
+                        </div>
+                      ))}
+                      
+                      {/* Persistent background transfers */}
+                      {activeJobs.map(job => (
+                        <div key={job.id} className="p-3 rounded-md border border-blue-200 bg-blue-50">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-sm font-medium">
+                              {job.sourceService} → {job.destinationService}
+                              <span className="ml-2 text-xs text-blue-600">(Background)</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {job.status === 'processing' && (
+                                <Button size="icon" variant="ghost" onClick={() => pauseJob(job.id)} aria-label="Pause">
+                                  <Pause className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status === 'paused' && (
+                                <Button size="icon" variant="ghost" onClick={() => resumeJob(job.id)} aria-label="Resume">
+                                  <Play className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status !== 'completed' && (
+                                <Button size="icon" variant="ghost" onClick={() => cancelJob(job.id)} aria-label="Cancel">
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                            <span>Status: {job.status}{job.status === 'failed' && job.error ? ` — ${job.error}` : ''}</span>
+                            <span>{Math.max(0, Math.min(100, Math.round(job.progress)))}%</span>
+                          </div>
+                          <Progress value={Math.max(0, Math.min(100, job.progress))} />
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Files: {job.sourceFiles?.length || 0} • Retries: {job.retryCount}/{job.maxRetries}
                           </div>
                         </div>
                       ))}
