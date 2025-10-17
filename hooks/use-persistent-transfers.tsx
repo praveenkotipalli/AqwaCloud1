@@ -61,13 +61,13 @@ export function usePersistentTransfers() {
     }
   }, [user?.id])
 
-  // Poll for updates every 5 seconds
+  // Poll for updates every 2 seconds for more responsive updates
   useEffect(() => {
     if (!user?.id) return
 
     fetchTransferJobs()
     
-    const interval = setInterval(fetchTransferJobs, 5000)
+    const interval = setInterval(fetchTransferJobs, 2000)
     return () => clearInterval(interval)
   }, [user?.id, fetchTransferJobs])
 

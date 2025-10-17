@@ -49,6 +49,7 @@ import { OneDriveExplorer } from "@/components/onedrive-explorer"
 import { BandwidthCalculator, TransferEstimate } from "@/lib/bandwidth-calculator"
 import { PersistentTransfers } from "@/components/persistent-transfers"
 import { usePersistentTransfers } from "@/hooks/use-persistent-transfers"
+import { storeTransferJob, getActiveTransfers, updateTransferJob, archiveTransferJob } from "@/lib/persistent-transfer-storage"
 
 // Utility functions for data formatting
 const formatDataSize = (bytes: number): string => {
@@ -127,6 +128,7 @@ export default function TransferPage() {
   const [selectedDestFiles, setSelectedDestFiles] = useState<FileItem[]>([])
   const [selectionSide, setSelectionSide] = useState<'source' | 'destination' | null>(null)
   const [transferQueue, setTransferQueue] = useState<TransferJob[]>([])
+  const [storedTransfers, setStoredTransfers] = useState<any[]>([])
   const [enableRealTime, setEnableRealTime] = useState(true)
   const [showPersistentTransfers, setShowPersistentTransfers] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -137,6 +139,29 @@ export default function TransferPage() {
       router.push("/login")
     }
   }, [isAuthenticated, router])
+
+  // Load stored transfers on mount and poll for updates
+  useEffect(() => {
+    if (user?.id) {
+      loadStoredTransfers()
+      
+      // Poll for updates every 3 seconds
+      const interval = setInterval(loadStoredTransfers, 3000)
+      return () => clearInterval(interval)
+    }
+  }, [user?.id])
+
+  const loadStoredTransfers = async () => {
+    if (!user?.id) return
+    
+    try {
+      const transfers = await getActiveTransfers(user.id)
+      setStoredTransfers(transfers)
+      console.log(`📋 Loaded ${transfers.length} stored transfers`)
+    } catch (error) {
+      console.error('❌ Error loading stored transfers:', error)
+    }
+  }
 
   const handleLogoClick = () => {
     router.push("/dashboard")
@@ -177,7 +202,26 @@ export default function TransferPage() {
         startTime: Date.now()
       }
 
+      // Store in database for persistence
+      const storedJob = {
+        id: localJobId,
+        userId: user?.id || '',
+        sourceService,
+        destinationService,
+        sourceFiles: selectedSourceFiles,
+        destinationPath: selectedDestFiles[0]?.path || "root",
+        status: 'pending' as const,
+        progress: 0,
+        startTime: Date.now(),
+        currentFileIndex: 0,
+        totalFiles: selectedSourceFiles.length,
+        transferredBytes: 0,
+        totalBytes: totalBytes
+      }
+
+      await storeTransferJob(storedJob)
       setTransferQueue(prev => [...prev, newTransfer])
+      setStoredTransfers(prev => [...prev, storedJob])
       setSelectedSourceFiles([])
       setSelectionSide(null)
 
@@ -235,6 +279,48 @@ export default function TransferPage() {
   const canStartTransfer = () => {
     const hasConnectedServices = connections && connections.filter(conn => conn.connected).length > 0
     return hasConnectedServices && selectedSourceFiles.length > 0 && sourceService && destinationService && !isLoading
+  }
+
+  // Control functions for stored transfers
+  const pauseStoredTransfer = async (jobId: string) => {
+    if (!user?.id) return
+    
+    try {
+      await updateTransferJob(jobId, user.id, { status: 'paused', pausedAt: Date.now() })
+      setStoredTransfers(prev => prev.map(job => 
+        job.id === jobId ? { ...job, status: 'paused', pausedAt: Date.now() } : job
+      ))
+      console.log(`⏸️ Paused stored transfer: ${jobId}`)
+    } catch (error) {
+      console.error('❌ Error pausing stored transfer:', error)
+    }
+  }
+
+  const resumeStoredTransfer = async (jobId: string) => {
+    if (!user?.id) return
+    
+    try {
+      await updateTransferJob(jobId, user.id, { status: 'transferring' })
+      setStoredTransfers(prev => prev.map(job => 
+        job.id === jobId ? { ...job, status: 'transferring' } : job
+      ))
+      console.log(`▶️ Resumed stored transfer: ${jobId}`)
+    } catch (error) {
+      console.error('❌ Error resuming stored transfer:', error)
+    }
+  }
+
+  const cancelStoredTransfer = async (jobId: string) => {
+    if (!user?.id) return
+    
+    try {
+      await updateTransferJob(jobId, user.id, { status: 'failed', error: 'Cancelled by user' })
+      await archiveTransferJob(jobId, user.id)
+      setStoredTransfers(prev => prev.filter(job => job.id !== jobId))
+      console.log(`❌ Cancelled stored transfer: ${jobId}`)
+    } catch (error) {
+      console.error('❌ Error cancelling stored transfer:', error)
+    }
   }
 
   const getTotalSize = () => {
@@ -680,7 +766,44 @@ export default function TransferPage() {
                         </div>
                       ))}
                       
-                      {/* Persistent background transfers */}
+                      {/* Stored persistent transfers */}
+                      {storedTransfers.map(job => (
+                        <div key={job.id} className="p-3 rounded-md border border-green-200 bg-green-50">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-sm font-medium">
+                              {job.sourceService} → {job.destinationService}
+                              <span className="ml-2 text-xs text-green-600">(Persistent)</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {job.status === 'transferring' && (
+                                <Button size="icon" variant="ghost" onClick={() => pauseStoredTransfer(job.id)} aria-label="Pause">
+                                  <Pause className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status === 'paused' && (
+                                <Button size="icon" variant="ghost" onClick={() => resumeStoredTransfer(job.id)} aria-label="Resume">
+                                  <Play className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {job.status !== 'completed' && (
+                                <Button size="icon" variant="ghost" onClick={() => cancelStoredTransfer(job.id)} aria-label="Cancel">
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                            <span>Status: {job.status}{job.status === 'failed' && job.error ? ` — ${job.error}` : ''}</span>
+                            <span>{Math.max(0, Math.min(100, Math.round(job.progress)))}%</span>
+                          </div>
+                          <Progress value={Math.max(0, Math.min(100, job.progress))} />
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Files: {job.currentFileIndex}/{job.totalFiles} • {formatDataSize(job.transferredBytes)}/{formatDataSize(job.totalBytes)}
+                          </div>
+                        </div>
+                      ))}
+                      
+                      {/* Background API transfers */}
                       {activeJobs.map(job => (
                         <div key={job.id} className="p-3 rounded-md border border-blue-200 bg-blue-50">
                           <div className="flex items-center justify-between mb-2">
