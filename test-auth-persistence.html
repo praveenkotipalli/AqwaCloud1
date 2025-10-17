@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Auth Persistence Test</title>
+</head>
+<body>
+    <h1>🧪 Auth Persistence Test</h1>
+    
+    <div id="status">Testing authentication persistence...</div>
+    <div id="results"></div>
+    
+    <button onclick="testAuthState()">Check Auth State</button>
+    <button onclick="testPageRefresh()">Test Page Refresh</button>
+    <button onclick="clearAuth()">Clear Auth</button>
+
+    <script>
+        function testAuthState() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                // Check if user is logged in
+                const user = JSON.parse(localStorage.getItem('firebase:authUser:your-project-id:default') || 'null')
+                const authToken = localStorage.getItem('firebase:authToken:your-project-id:default')
+                
+                status.textContent = 'Auth state checked'
+                results.innerHTML = `
+                    <p><strong>User:</strong> ${user ? user.uid : 'Not logged in'}</p>
+                    <p><strong>Email:</strong> ${user ? user.email : 'N/A'}</p>
+                    <p><strong>Token:</strong> ${authToken ? 'Present' : 'Missing'}</p>
+                    <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
+                `
+                
+            } catch (error) {
+                status.textContent = '❌ Auth check failed'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+        
+        function testPageRefresh() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            status.textContent = 'Refreshing page...'
+            results.innerHTML = '<p>🔄 Page will refresh in 2 seconds...</p>'
+            
+            setTimeout(() => {
+                window.location.reload()
+            }, 2000)
+        }
+        
+        function clearAuth() {
+            const status = document.getElementById('status')
+            const results = document.getElementById('results')
+            
+            try {
+                // Clear all Firebase auth data
+                const keys = Object.keys(localStorage)
+                keys.forEach(key => {
+                    if (key.includes('firebase')) {
+                        localStorage.removeItem(key)
+                    }
+                })
+                
+                status.textContent = '✅ Auth cleared'
+                results.innerHTML = '<p>✅ All Firebase auth data cleared from localStorage</p>'
+                
+            } catch (error) {
+                status.textContent = '❌ Clear failed'
+                results.innerHTML = '<p>❌ Error: ' + error.message + '</p>'
+            }
+        }
+        
+        // Auto-check auth state on load
+        window.onload = function() {
+            testAuthState()
+        }
+    </script>
+</body>
+</html>

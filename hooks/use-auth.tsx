@@ -57,7 +57,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hasUser: !!firebaseUser,
         uid: firebaseUser?.uid,
         email: firebaseUser?.email,
-        isAnonymous: firebaseUser?.isAnonymous
+        isAnonymous: firebaseUser?.isAnonymous,
+        timestamp: new Date().toISOString()
       })
       
       if (firebaseUser) {
@@ -238,7 +239,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = {
     user,
-    loading,
+    loading: loading || !authInitialized,
     isAuthenticated: !!user && !user.id.includes('anonymous'),
     login,
     signup,

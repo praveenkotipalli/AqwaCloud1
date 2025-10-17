@@ -97,7 +97,7 @@ interface TransferJob {
 }
 
 export default function TransferPage() {
-  const { isAuthenticated, user } = useAuth()
+  const { isAuthenticated, user, loading } = useAuth()
   const router = useRouter()
   const { 
     connections, 
@@ -135,10 +135,24 @@ export default function TransferPage() {
   const [errorMessage, setErrorMessage] = useState<string>("")
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push("/login")
-    }
-  }, [isAuthenticated, router])
+    console.log('🔐 Transfer page auth check:', {
+      isAuthenticated,
+      loading,
+      hasUser: !!user,
+      userId: user?.id,
+      timestamp: new Date().toISOString()
+    })
+    
+    // Add a small delay to prevent flash of login page during auth state restoration
+    const timer = setTimeout(() => {
+      if (!loading && !isAuthenticated) {
+        console.log('🔐 Redirecting to login - not authenticated')
+        router.push("/login")
+      }
+    }, 100)
+
+    return () => clearTimeout(timer)
+  }, [isAuthenticated, loading, router, user])
 
   // Load stored transfers on mount and poll for updates
   useEffect(() => {
@@ -158,6 +172,15 @@ export default function TransferPage() {
       const transfers = await getActiveTransfers(user.id)
       setStoredTransfers(transfers)
       console.log(`📋 Loaded ${transfers.length} stored transfers`)
+      
+      // Debug: Check localStorage directly
+      const localJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+      console.log(`🔍 Debug - Total jobs in localStorage: ${localJobs.length}`)
+      console.log(`🔍 Debug - User ID: ${user.id}`)
+      
+      const userJobs = localJobs.filter((job: any) => job.userId === user.id)
+      console.log(`🔍 Debug - User's jobs in localStorage: ${userJobs.length}`)
+      
     } catch (error) {
       console.error('❌ Error loading stored transfers:', error)
     }
@@ -338,8 +361,26 @@ export default function TransferPage() {
     )
   }
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p>Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
   if (!isAuthenticated) {
-    return null
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p>Redirecting to login...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -725,8 +766,35 @@ export default function TransferPage() {
                       <Separator className="my-2" />
                     )}
 
-                    {transferJobs.length === 0 && (
-                      <div className="text-sm text-muted-foreground">No transfers yet. Start one to see progress here.</div>
+                    {transferJobs.length === 0 && storedTransfers.length === 0 && activeJobs.length === 0 && (
+                      <div className="text-sm text-muted-foreground">
+                        No transfers yet. Start one to see progress here.
+                        <br />
+                        <button 
+                          onClick={() => {
+                            const testJob = {
+                              id: 'test-transfer-' + Date.now(),
+                              userId: user?.id || 'test-user',
+                              sourceService: 'google-drive',
+                              destinationService: 'onedrive',
+                              sourceFiles: [{ name: 'test.txt', size: '1MB' }],
+                              destinationPath: 'root',
+                              status: 'pending' as const,
+                              progress: 0,
+                              startTime: Date.now(),
+                              currentFileIndex: 0,
+                              totalFiles: 1,
+                              transferredBytes: 0,
+                              totalBytes: 1048576
+                            }
+                            setStoredTransfers(prev => [...prev, testJob])
+                            console.log('🧪 Added test transfer to UI')
+                          }}
+                          className="mt-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded"
+                        >
+                          Test localStorage
+                        </button>
+                      </div>
                     )}
 
                     <div className="space-y-3">

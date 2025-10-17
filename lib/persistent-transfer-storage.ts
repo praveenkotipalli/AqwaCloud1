@@ -37,14 +37,16 @@ export async function storeTransferJob(job: StoredTransferJob): Promise<void> {
     
     console.log(`💾 Stored transfer job: ${job.id}`)
   } catch (error) {
-    console.error('❌ Error storing transfer job:', error)
+    console.error('❌ Error storing transfer job in database:', error)
+    console.log('🔄 Attempting localStorage fallback...')
     
     // Fallback: Store in localStorage for persistence
     try {
       const existingJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
       existingJobs.push(job)
       localStorage.setItem('persistentTransfers', JSON.stringify(existingJobs))
-      console.log(`💾 Stored transfer job in localStorage: ${job.id}`)
+      console.log(`✅ Successfully stored transfer job in localStorage: ${job.id}`)
+      console.log(`📊 Total jobs in localStorage: ${existingJobs.length}`)
     } catch (localError) {
       console.error('❌ Error storing in localStorage:', localError)
       throw error // Re-throw original error if localStorage also fails
@@ -71,12 +73,15 @@ export async function getActiveTransfers(userId: string): Promise<StoredTransfer
     
     // Fallback: Get from localStorage
     try {
+      console.log('🔄 Attempting localStorage fallback for retrieval...')
       const storedJobs = JSON.parse(localStorage.getItem('persistentTransfers') || '[]')
+      console.log(`📊 Total jobs in localStorage: ${storedJobs.length}`)
+      
       const userJobs = storedJobs.filter((job: StoredTransferJob) => 
         job.userId === userId && 
         ['pending', 'transferring', 'paused'].includes(job.status)
       )
-      console.log(`💾 Retrieved ${userJobs.length} transfers from localStorage`)
+      console.log(`✅ Retrieved ${userJobs.length} transfers from localStorage for user ${userId}`)
       return userJobs.sort((a, b) => b.startTime - a.startTime)
     } catch (localError) {
       console.error('❌ Error fetching from localStorage:', localError)
