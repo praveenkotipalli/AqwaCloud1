@@ -33,9 +33,17 @@ export function usePersistentTransfers() {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`/api/transfers/status?userId=${user.id}`)
+      // Try the main API first
+      let response = await fetch(`/api/transfers/status?userId=${user.id}`)
+      
       if (!response.ok) {
-        throw new Error('Failed to fetch transfer status')
+        console.warn('⚠️ Main API failed, trying simple API...')
+        // Fallback to simple API
+        response = await fetch(`/api/transfers/simple?userId=${user.id}`)
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch transfer status from both APIs')
       }
 
       const data = await response.json()
@@ -45,6 +53,9 @@ export function usePersistentTransfers() {
     } catch (err) {
       console.error('❌ Error fetching transfer jobs:', err)
       setError(err instanceof Error ? err.message : 'Failed to fetch transfers')
+      // Set empty arrays on error to prevent UI issues
+      setActiveJobs([])
+      setRecentJobs([])
     } finally {
       setLoading(false)
     }
@@ -73,7 +84,8 @@ export function usePersistentTransfers() {
     }
 
     try {
-      const response = await fetch('/api/transfers/queue', {
+      // Try main API first
+      let response = await fetch('/api/transfers/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -85,6 +97,23 @@ export function usePersistentTransfers() {
           priority
         })
       })
+
+      if (!response.ok) {
+        console.warn('⚠️ Main queue API failed, trying simple API...')
+        // Fallback to simple API
+        response = await fetch('/api/transfers/simple', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.id,
+            sourceService,
+            destinationService,
+            sourceFiles,
+            destinationPath,
+            priority
+          })
+        })
+      }
 
       if (!response.ok) {
         const errorData = await response.json()

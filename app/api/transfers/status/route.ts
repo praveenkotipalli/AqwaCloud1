@@ -39,58 +39,71 @@ export async function GET(request: NextRequest) {
       })
     } else {
       // Get all active jobs for user
-      const userJobsQuery = query(
-        collection(db, 'users', userId, 'transferJobs'),
-        where('status', 'in', ['queued', 'processing', 'paused']),
-        orderBy('createdAt', 'desc'),
-        limit(50)
-      )
-      
-      const userJobsSnapshot = await getDocs(userJobsQuery)
-      const jobs = userJobsSnapshot.docs.map(doc => {
-        const data = doc.data()
-        return {
-          id: doc.id,
-          status: data.status,
-          progress: data.progress || 0,
-          error: data.error,
-          createdAt: data.createdAt,
-          startedAt: data.startedAt,
-          completedAt: data.completedAt,
-          sourceService: data.sourceService,
-          destinationService: data.destinationService,
-          sourceFiles: data.sourceFiles,
-          retryCount: data.retryCount || 0,
-          maxRetries: data.maxRetries || 3
-        }
-      })
+      let jobs: any[] = []
+      let recentJobs: any[] = []
 
-      // Get recent completed/failed jobs
-      const recentJobsQuery = query(
-        collection(db, 'users', userId, 'transferJobs'),
-        where('status', 'in', ['completed', 'failed']),
-        orderBy('completedAt', 'desc'),
-        limit(20)
-      )
-      
-      const recentJobsSnapshot = await getDocs(recentJobsQuery)
-      const recentJobs = recentJobsSnapshot.docs.map(doc => {
-        const data = doc.data()
-        return {
-          id: doc.id,
-          status: data.status,
-          progress: data.progress || 0,
-          error: data.error,
-          createdAt: data.createdAt,
-          startedAt: data.startedAt,
-          completedAt: data.completedAt,
-          sourceService: data.sourceService,
-          destinationService: data.destinationService,
-          sourceFiles: data.sourceFiles,
-          retryCount: data.retryCount || 0,
-          maxRetries: data.maxRetries || 3
-        }
-      })
+      try {
+        const userJobsQuery = query(
+          collection(db, 'users', userId, 'transferJobs'),
+          where('status', 'in', ['queued', 'processing', 'paused']),
+          orderBy('createdAt', 'desc'),
+          limit(50)
+        )
+        
+        const userJobsSnapshot = await getDocs(userJobsQuery)
+        jobs = userJobsSnapshot.docs.map(doc => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            status: data.status,
+            progress: data.progress || 0,
+            error: data.error,
+            createdAt: data.createdAt,
+            startedAt: data.startedAt,
+            completedAt: data.completedAt,
+            sourceService: data.sourceService,
+            destinationService: data.destinationService,
+            sourceFiles: data.sourceFiles,
+            retryCount: data.retryCount || 0,
+            maxRetries: data.maxRetries || 3
+          }
+        })
+      } catch (activeError) {
+        console.warn('⚠️ No active jobs found or collection does not exist:', activeError)
+        jobs = []
+      }
+
+      try {
+        // Get recent completed/failed jobs
+        const recentJobsQuery = query(
+          collection(db, 'users', userId, 'transferJobs'),
+          where('status', 'in', ['completed', 'failed']),
+          orderBy('completedAt', 'desc'),
+          limit(20)
+        )
+        
+        const recentJobsSnapshot = await getDocs(recentJobsQuery)
+        recentJobs = recentJobsSnapshot.docs.map(doc => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            status: data.status,
+            progress: data.progress || 0,
+            error: data.error,
+            createdAt: data.createdAt,
+            startedAt: data.startedAt,
+            completedAt: data.completedAt,
+            sourceService: data.sourceService,
+            destinationService: data.destinationService,
+            sourceFiles: data.sourceFiles,
+            retryCount: data.retryCount || 0,
+            maxRetries: data.maxRetries || 3
+          }
+        })
+      } catch (recentError) {
+        console.warn('⚠️ No recent jobs found or collection does not exist:', recentError)
+        recentJobs = []
+      }
 
       return NextResponse.json({ 
         activeJobs: jobs,

@@ -56,18 +56,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Save to Firestore
-    await setDoc(doc(db, 'transferJobs', jobId), {
-      ...transferJob,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    })
+    try {
+      await setDoc(doc(db, 'transferJobs', jobId), {
+        ...transferJob,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      })
 
-    // Add to user's transfer history
-    await setDoc(doc(db, 'users', userId, 'transferJobs', jobId), {
-      ...transferJob,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    })
+      // Add to user's transfer history
+      await setDoc(doc(db, 'users', userId, 'transferJobs', jobId), {
+        ...transferJob,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      })
+    } catch (firestoreError) {
+      console.error('❌ Firestore error:', firestoreError)
+      // Continue anyway - the job will still be processed
+    }
 
     console.log(`📋 Queued transfer job: ${jobId} for user: ${userId}`)
 
@@ -148,11 +153,19 @@ export async function PUT(request: NextRequest) {
     if (status === 'completed' || status === 'failed') updateData.completedAt = serverTimestamp()
 
     // Update main job document
-    await updateDoc(doc(db, 'transferJobs', jobId), updateData)
+    try {
+      await updateDoc(doc(db, 'transferJobs', jobId), updateData)
+    } catch (mainError) {
+      console.warn('⚠️ Could not update main job document:', mainError)
+    }
 
     // Update user's job document
     if (userId) {
-      await updateDoc(doc(db, 'users', userId, 'transferJobs', jobId), updateData)
+      try {
+        await updateDoc(doc(db, 'users', userId, 'transferJobs', jobId), updateData)
+      } catch (userError) {
+        console.warn('⚠️ Could not update user job document:', userError)
+      }
     }
 
     console.log(`📝 Updated transfer job ${jobId}: ${status} (${progress}%)`)

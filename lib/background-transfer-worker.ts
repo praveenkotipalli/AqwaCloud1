@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase'
-import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, limit } from 'firebase/firestore'
+import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp, orderBy, limit, getDoc, setDoc } from 'firebase/firestore'
 import { createGoogleDriveService, GoogleDriveService } from '@/lib/google-drive'
 import { createOneDriveService, OneDriveService } from '@/lib/onedrive'
 import { CloudConnection } from '@/hooks/use-cloud-connections'
@@ -175,10 +175,18 @@ export class BackgroundTransferWorker {
 
   private async getUserConnections(userId: string): Promise<CloudConnection[] | null> {
     try {
-      // In a real implementation, you'd fetch from your user's stored connections
-      // For now, we'll return null to indicate connections need to be stored server-side
-      console.log(`🔍 Fetching connections for user: ${userId}`)
-      return null
+      // Try to get user's stored connections from Firestore
+      const userConnectionsRef = doc(db, 'users', userId, 'connections', 'active')
+      const userConnectionsDoc = await getDoc(userConnectionsRef)
+      
+      if (userConnectionsDoc.exists()) {
+        const connections = userConnectionsDoc.data()?.connections || []
+        console.log(`🔍 Found ${connections.length} stored connections for user: ${userId}`)
+        return connections
+      } else {
+        console.warn(`⚠️ No stored connections found for user: ${userId}`)
+        return null
+      }
     } catch (error) {
       console.error('❌ Error fetching user connections:', error)
       return null

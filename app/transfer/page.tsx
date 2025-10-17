@@ -185,14 +185,38 @@ export default function TransferPage() {
       
       // Queue transfer for background processing (persistent)
       const destinationPath = selectedDestFiles[0]?.path || "root"
-      const persistentJobId = await queueTransfer(
-        sourceService,
-        destinationService,
-        selectedSourceFiles,
-        destinationPath,
-        1
-      )
-      console.log(`📋 Transfer queued for background processing: ${persistentJobId}`)
+      
+      try {
+        const persistentJobId = await queueTransfer(
+          sourceService,
+          destinationService,
+          selectedSourceFiles,
+          destinationPath,
+          1
+        )
+        console.log(`📋 Transfer queued for background processing: ${persistentJobId}`)
+      } catch (queueError) {
+        console.warn('⚠️ Failed to queue persistent transfer, using simple mode:', queueError)
+        
+        // Fallback to simple API
+        const simpleResponse = await fetch('/api/transfers/simple', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user?.id,
+            sourceService,
+            destinationService,
+            sourceFiles: selectedSourceFiles,
+            destinationPath,
+            priority: 1
+          })
+        })
+        
+        if (simpleResponse.ok) {
+          const simpleResult = await simpleResponse.json()
+          console.log(`📋 Simple transfer queued: ${simpleResult.jobId}`)
+        }
+      }
 
       // Also start real-time transfer if enabled (for immediate feedback)
       if (enableRealTime) {
