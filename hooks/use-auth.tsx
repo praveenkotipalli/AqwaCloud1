@@ -48,15 +48,35 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [authInitialized, setAuthInitialized] = useState(false)
 
   useEffect(() => {
+    console.log('🔐 Setting up auth state listener...')
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      console.log('🔐 Auth state changed:', {
+        hasUser: !!firebaseUser,
+        uid: firebaseUser?.uid,
+        email: firebaseUser?.email,
+        isAnonymous: firebaseUser?.isAnonymous
+      })
+      
       if (firebaseUser) {
+        // Skip anonymous users for real authentication
+        if (firebaseUser.isAnonymous) {
+          console.log('🔐 Anonymous user detected, skipping...')
+          setUser(null)
+          setLoading(false)
+          setAuthInitialized(true)
+          return
+        }
+        
         // Ensure user doc exists and read role/plan
         try {
+          console.log('🔐 Processing authenticated user:', firebaseUser.uid)
           const userRef = doc(db, "users", firebaseUser.uid)
           const snap = await getDoc(userRef)
           if (!snap.exists()) {
+            console.log('🔐 Creating user document...')
             await setDoc(userRef, {
               email: firebaseUser.email || "",
               name: firebaseUser.displayName || "",
@@ -78,8 +98,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               storageUsed: 0
             }
           }
+          console.log('🔐 User data set:', userData)
           setUser(userData)
         } catch (e) {
+          console.error('🔐 Error processing user:', e)
           const userData: User = {
             id: firebaseUser.uid,
             email: firebaseUser.email || "",
@@ -88,23 +110,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             plan: "free",
             usage: { transfersThisMonth: 0, storageUsed: 0 }
           }
+          console.log('🔐 Fallback user data set:', userData)
           setUser(userData)
         }
       } else {
+        console.log('🔐 No authenticated user')
         setUser(null)
       }
       setLoading(false)
+      setAuthInitialized(true)
     })
 
     return () => unsubscribe()
   }, [])
 
-  // Ensure a Firebase user exists (anonymous) so Firestore reads/writes work even before explicit login
+  // Check for existing auth state on mount
   useEffect(() => {
-    if (!loading && !user && typeof window !== 'undefined') {
-      signInAnonymously(auth).catch(() => {})
+    if (typeof window !== 'undefined') {
+      console.log('🔐 Checking existing auth state...')
+      const currentUser = auth.currentUser
+      console.log('🔐 Current user on mount:', {
+        hasUser: !!currentUser,
+        uid: currentUser?.uid,
+        email: currentUser?.email,
+        isAnonymous: currentUser?.isAnonymous
+      })
     }
-  }, [loading, user])
+  }, [])
 
   const loginWithGoogle = async (): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -207,10 +239,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = {
     user,
     loading,
+    isAuthenticated: !!user && !user.id.includes('anonymous'),
     login,
     signup,
     logout,
-    isAuthenticated: !!user,
     loginWithGoogle,
   }
 

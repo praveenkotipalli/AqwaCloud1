@@ -22,6 +22,13 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
+// Ensure auth persistence is enabled
+if (typeof window !== 'undefined') {
+  // Firebase auth persistence is enabled by default in web apps
+  // This ensures the user stays logged in across browser sessions
+  console.log('🔐 Firebase Auth initialized with persistence enabled');
+}
+
 // Initialize Analytics (only if supported and in browser environment)
 let analytics: any = null;
 if (typeof window !== 'undefined') {

@@ -39,9 +39,15 @@ function DashboardContent() {
   const [fireMetrics, setFireMetrics] = useState<null | { monthTransfers?: number; monthBytes?: number; monthCost?: number; totalTransfers?: number; totalBytes?: number; totalCost?: number }>(null)
 
   useEffect(() => {
-    if (!loading && !isAuthenticated) {
-      router.push("/login")
-    }
+    // Add a small delay to prevent flash of login page
+    const timer = setTimeout(() => {
+      if (!loading && !isAuthenticated) {
+        console.log('🔐 Redirecting to login - not authenticated')
+        router.push("/login")
+      }
+    }, 100)
+
+    return () => clearTimeout(timer)
   }, [isAuthenticated, loading, router])
 
   // Redirect admins to admin dashboard unless forced user view
